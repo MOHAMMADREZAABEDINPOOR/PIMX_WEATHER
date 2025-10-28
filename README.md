@@ -1,239 +1,193 @@
-# 🌦️ هواشناسی خفن
+# 🌦️ PIMX_WEATHER
 
-یک وب‌اپلیکیشن هواشناسی پیشرفته با قابلیت‌های نجومی و نمایش دقیق موقعیت خورشید و ماه
+An advanced weather application with real-time forecasts, astronomical data visualization, and beautiful responsive UI.
 
-## ✨ امکانات
+## ✨ Features
 
-### 🌍 موقعیت‌یابی
-- تشخیص خودکار موقعیت با GPS
-- Fallback به IP location
-- جستجوی شهر با autocomplete
-- ذخیره تا ۲۰ شهر و سویچ بین آنها
+### 🌍 Location
+- Automatic GPS location detection
+- IP-based location fallback
+- City search with autocomplete
+- Save up to 20 cities and switch between them
 
-### 🌤️ هواشناسی
-- وضعیت فعلی با جزئیات کامل
-- پیش‌بینی ساعتی (۲۴ ساعت)
-- پیش‌بینی روزانه (۷ یا ۱۴ روز)
-- انیمیشن‌های زیبا برای آفتابی، ابری، بارانی، برفی
-- تم‌های دینامیک بر اساس وضعیت هوا
+### 🌤️ Weather Forecasting
+- Current conditions with complete details
+- Hourly forecast (24 hours)
+- Daily forecast (7 or 14 days)
+- Beautiful animations for sunny, cloudy, rainy, and snowy conditions
+- Dynamic themes based on weather conditions
 
-### 📊 آمار تاریخی
-- بارش هفته/ماه/۶ماه/سال گذشته
-- نمودارهای تعاملی با Chart.js
-- آمار دما و بارش
+### 📊 Historical Statistics
+- Precipitation data for past week/month/6 months/year
+- Interactive charts with Chart.js
+- Temperature and precipitation statistics
 
-### ☀️🌙 نجوم
-- **نمودار قوسی خورشید** (جدید! 🎨): 
-  - نمایش مسیر واقعی خورشید در آسمان به صورت قوس زیبا
-  - نقاط زمانی (۹ صبح، ۱۲ ظهر، ۳ بعدازظهر، ۶ عصر)
-  - Gradient رنگی از طلوع تا غروب
-  - افکت درخشش (glow) و انیمیشن pulse
-  - محاسبه دقیق موقعیت با Quadratic Bezier Curve
-- **نمودار قوسی ماه** (جدید! 🌙):
-  - قوس زیبا برای مسیر ماه
-  - ستاره‌های چشمک‌زن متحرک
-  - افکت‌های بصری شب
-- **فاز ماه واقعی**: نمایش گرافیکی ۸ فاز ماه با دهانه‌ها و دریاها
-- **منظومه شمسی با موقعیت‌های واقعی نجومی**:
-  - ۸ سیاره (عطارد، زهره، زمین، مریخ، مشتری، زحل، اورانوس، نپتون)
-  - محاسبات دقیق بر اساا الگوریتم‌های VSOP87 و Keplerian
-  - موقعیت سیارات برای **هر تاریخ** و **هر ساعت**
-  - کنترل اسلایدر برای تغییر ساعت و مشاهده حرکت سیارات
-  - نمایش فاصله، مختصات، و زاویه هر سیاره
-  - به‌روزرسانی لحظه‌ای با تغییر روز یا ساعت
-  - حلقه زحل + ماه زمین
-- طلوع/غروب خورشید و ماه
-- طول روز و شب
-- شاخص UV
+### ☀️🌙 Astronomy
+- **Sun Arc Chart** (New! 🎨):
+  - Beautiful visualization of the sun's actual path across the sky
+  - Time markers (9 AM, 12 PM, 3 PM, 6 PM)
+  - Color gradient from sunrise to sunset
+  - Glow effects and pulse animations
+  - Precise position calculation using Quadratic Bezier Curves
+  
+- **Moon Arc Chart** (New! 🌙):
+  - Beautiful arc for moon's path
+  - Twinkling animated stars
+  - Night visual effects
+  
+- **Realistic Moon Phases**: Graphical display of 8 moon phases with craters and seas
+  
+- **Solar System with Real Astronomical Positions**:
+  - 8 planets (Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune)
+  - Accurate calculations based on VSOP87 and Keplerian algorithms
+  - Planet positions for **any date** and **any time**
+  - Hour slider to change time and observe planetary motion
+  - Display distance, coordinates, and angle for each planet
+  - Real-time updates when changing day or time
+  - Saturn's rings + Earth's moon
+  
+- Sunrise/sunset and moonrise/moonset times
+- Day and night length
+- UV Index
 
-### 🎯 ناوبری بین روزها
-- کلیک روی هر روز → تمام صفحه تغییر می‌کند
-- نمایش ساعت به ساعت آن روز
-- دکمه‌های قبل/بعد برای سویچ سریع
+### 🎯 Day Navigation
+- Click on any day → entire page updates
+- Hour-by-hour display for that day
+- Previous/Next buttons for quick switching
 
-### 📱 ریسپانسیو
-- کاملاً واکنش‌گرا
-- بهینه برای موبایل، تبلت، دسکتاپ
+### 📱 Responsive Design
+- Fully responsive
+- Optimized for mobile, tablet, and desktop
 
-## 🚀 نحوه استفاده
+## 🚀 How to Use
 
-1. فایل `index.html` را در مرورگر باز کنید
-2. اجازه دسترسی به موقعیت را بدهید (اختیاری)
-3. یا شهر مورد نظر را جستجو کنید
+1. Open `index.html` in your browser
+2. Allow location access (optional)
+3. Or search for your desired city
 
-## 🐛 دیباگ موقعیت خورشید/ماه
+## 🌐 Data Sources & Algorithms
 
-اگر موقعیت خورشید دقیق نیست:
-
-1. **کنسول مرورگر را باز کنید**: `F12` یا `Ctrl+Shift+I`
-2. به تب **Console** بروید
-3. خروجی‌های زیر را ببینید:
-
-```
-🌅 Debug Sun Position:
-Current Time (Local): ...
-Sunrise: ...
-Sunset: ...
-☀️ Sun is UP!
-Position %: ...
-```
-
-### چک کنید:
-- آیا `Current Time` با ساعت واقعی شما مطابقت دارد؟
-- آیا `Sunrise` و `Sunset` درست هستند؟
-- آیا `Position %` منطقی است؟
-
-### محاسبه دستی:
-```
-موقعیت٪ = ((زمان فعلی - طلوع) / (غروب - طلوع)) × ۱۰۰
-```
-
-مثال:
-- طلوع: ۰۶:۳۲ (۶.۵۳ ساعت)
-- غروب: ۱۷:۱۸ (۱۷.۳ ساعت)
-- الان: ۱۲:۰۰ (۱۲ ساعت)
-
-```
-موقعیت = ((۱۲ - ۶.۵۳) / (۱۷.۳ - ۶.۵۳)) × ۱۰۰
-        = (۵.۴۷ / ۱۰.۷۷) × ۱۰۰
-        = ۵۰.۸٪
-```
-
-## 🌐 منابع داده و الگوریتم‌ها
-
-### API های استفاده شده:
-- **هواشناسی**: [Open-Meteo](https://open-meteo.com) - دقیق‌ترین API رایگان
-- **کیفیت هوا**: Open-Meteo Air Quality API
-- **آرشیو تاریخی**: Open-Meteo Archive API
+### APIs Used:
+- **Weather**: [Open-Meteo](https://open-meteo.com) - Most accurate free API
+- **Air Quality**: Open-Meteo Air Quality API
+- **Historical Archive**: Open-Meteo Archive API
 - **Geocoding**: Open-Meteo Geocoding API
 
-### الگوریتم‌های نجومی:
-- **VSOP87**: برای محاسبه عناصر مداری سیارات
-- **Kepler's Equation**: برای محاسبه موقعیت دقیق سیارات
-- **Julian Day**: برای تبدیل تاریخ و زمان
-- مرجع: [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) و [Astronomical Algorithms by Jean Meeus](https://www.willbell.com/math/MC1.HTM)
+### Astronomical Algorithms:
+- **VSOP87**: For calculating planetary orbital elements
+- **Kepler's Equation**: For precise planetary position calculation
+- **Julian Day**: For date and time conversion
+- Reference: [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) and [Astronomical Algorithms by Jean Meeus](https://www.willbell.com/math/MC1.HTM)
 
-## 🎨 فناوری‌ها
+## 🎨 Technologies
 
 - HTML5
 - CSS3 (Grid, Flexbox, Animations)
 - Vanilla JavaScript (ES6+)
-- Chart.js برای نمودارها
-- فونت Vazirmatn
+- Chart.js for charts
+- Vazirmatn Font
 
-## 📝 یادداشت‌های فنی
+## 📝 Technical Notes
 
-### محاسبه موقعیت خورشید/ماه روی قوس (جدید! 🎨)
+### Sun/Moon Position Calculation on Arc (New! 🎨)
 
-نمودار خورشید و ماه از **Quadratic Bezier Curve** برای نمایش مسیر واقعی در آسمان استفاده می‌کند:
+The sun and moon charts use **Quadratic Bezier Curves** to display the actual path in the sky:
 
-#### فرمول محاسبه:
+#### Calculation Formula:
 ```
-قوس: M 20,130 Q 200,20 380,130
-- نقطه شروع (طلوع): (20, 130)
-- نقطه کنترل (اوج): (200, 20)
-- نقطه پایان (غروب): (380, 130)
+Arc: M 20,130 Q 200,20 380,130
+- Start point (sunrise): (20, 130)
+- Control point (peak): (200, 20)
+- End point (sunset): (380, 130)
 ```
 
-#### محاسبه موقعیت (x, y):
+#### Position Calculation (x, y):
 ```javascript
-t = (زمان فعلی - طلوع) / (غروب - طلوع)  // 0 تا 1
+t = (current time - sunrise) / (sunset - sunrise)  // 0 to 1
 x = (1-t)² × 20 + 2(1-t)t × 200 + t² × 380
 y = (1-t)² × 130 + 2(1-t)t × 20 + t² × 130
 ```
 
-#### مثال:
-- طلوع: 06:18
-- غروب: 17:18  
-- ساعت فعلی: 15:18
-- t = (15:18 - 06:18) / (17:18 - 06:18) = 9/11 = 0.818
-- موقعیت: نزدیک به انتهای قوس (غروب)
+### Planetary Position Calculation (New! 🚀)
 
-### محاسبه موقعیت سیارات (جدید! 🚀)
-
-این برنامه از **الگوریتم‌های نجومی دقیق** برای محاسبه موقعیت واقعی سیارات استفاده می‌کند:
+This application uses **precise astronomical algorithms** to calculate real planetary positions:
 
 #### 1. **Julian Day Number (JD)**
-- تبدیل تاریخ و ساعت به شماره روز جولیان
-- دقت تا سطح ثانیه
-- مرجع: J2000.0 (1 ژانویه 2000، ساعت 12:00 UTC)
+- Convert date and time to Julian Day Number
+- Accuracy down to the second
+- Reference: J2000.0 (January 1, 2000, 12:00 UTC)
 
-#### 2. **عناصر مداری سیارات (Orbital Elements)**
-برای هر سیاره، پارامترهای زیر محاسبه می‌شود:
-- `a` (Semi-major axis): نیم‌قطر بزرگ مدار به AU
-- `e` (Eccentricity): کجی مدار
-- `I` (Inclination): زاویه انحراف نسبت به صفحه اکلیپتیک
-- `L` (Mean longitude): طول میانگین
-- `ω̃` (Longitude of perihelion): طول نزدیک‌ترین نقطه به خورشید
-- `Ω` (Longitude of ascending node): طول گره صعودی
+#### 2. **Planetary Orbital Elements**
+For each planet, the following parameters are calculated:
+- `a` (Semi-major axis): Major radius of orbit in AU
+- `e` (Eccentricity): Orbital eccentricity
+- `I` (Inclination): Angle of deviation from ecliptic plane
+- `L` (Mean longitude)
+- `ω̃` (Longitude of perihelion)
+- `Ω` (Longitude of ascending node)
 
-این مقادیر بر اساس **VSOP87** (Variations Séculaires des Orbites Planétaires) محاسبه شده و با گذر زمان به‌روزرسانی می‌شوند.
+These values are calculated based on **VSOP87** and updated over time.
 
-#### 3. **حل معادله کپلر (Kepler's Equation)**
+#### 3. **Solving Kepler's Equation**
 ```
 M = E - e·sin(E)
 ```
-- `M`: Anomaly میانگین
-- `E`: Eccentric Anomaly (با روش تکراری Newton-Raphson حل می‌شود)
+- `M`: Mean Anomaly
+- `E`: Eccentric Anomaly (solved iteratively using Newton-Raphson method)
 - `e`: Eccentricity
 
-#### 4. **محاسبه True Anomaly**
+#### 4. **True Anomaly Calculation**
 ```
 v = 2·atan2(√(1+e)·sin(E/2), √(1-e)·cos(E/2))
 ```
 
-#### 5. **تبدیل به مختصات هلیوسنتریک**
-موقعیت هر سیاره در سیستم مختصات 3D (X, Y, Z) نسبت به خورشید محاسبه می‌شود.
+#### 5. **Conversion to Heliocentric Coordinates**
+Each planet's position is calculated in 3D coordinate system (X, Y, Z) relative to the Sun.
 
-#### دقت محاسبات:
-- ✅ دقیق برای بازه زمانی 1800-2200 میلادی
-- ✅ خطای کمتر از 1 درجه برای موقعیت سیارات
-- ✅ به‌روزرسانی لحظه‌ای با تغییر ساعت
-- ✅ در نظر گرفتن timezone محلی
+#### Calculation Accuracy:
+- ✅ Accurate for time range 1800-2200 CE
+- ✅ Error less than 1 degree for planetary positions
+- ✅ Real-time updates when changing time
+- ✅ Local timezone consideration
 
-### محاسبه فاز ماه
-از فرمول Julian Day استفاده شده که دقت بالایی دارد. محاسبه Moon Age (عمر ماه از آخرین ماه نو) با دقت ده‌دهم روز.
+### Moon Phase Calculation
+Uses Julian Day formula with high precision. Moon Age calculation (from last new moon) accurate to tenth of a day.
 
-### طلوع/غروب ماه
-از تقریب ساده بر اساس فاز ماه استفاده شده. برای دقت بیشتر می‌توان از کتابخانه‌های نجومی استفاده کرد.
+### Moonrise/Moonset
+Uses simple approximation based on moon phase. For higher accuracy, astronomical libraries can be used.
 
 ### Timezone
-همه محاسبات بر اساس timezone شهر انتخابی انجام می‌شود.
+All calculations are based on the selected city's timezone.
 
-### کنترل زمان در منظومه شمسی
-- **امروز**: موقعیت سیارات برای ساعت فعلی محاسبه می‌شود (به‌روزرسانی با دکمه "اکنون")
-- **روزهای دیگر**: پیش‌فرض ساعت 12 ظهر
-- **اسلایدر ساعت**: امکان تغییر ساعت از 00:00 تا 23:00 و مشاهده تغییرات موقعیت سیارات
+### Time Control in Solar System
+- **Today**: Planetary positions calculated for current time (updated with "Now" button)
+- **Other days**: Default time is 12:00 PM
+- **Hour slider**: Change time from 00:00 to 23:00 and observe planetary motion
 
-## 🔧 عیب‌یابی رایج
+## 🔧 Troubleshooting
 
-### خورشید در موقعیت اشتباه
-- مرورگر را Refresh کنید
-- کنسول را چک کنید
-- مطمئن شوید timezone دستگاه شما درست است
+### Sun in Wrong Position
+- Refresh the browser
+- Check console
+- Make sure your device timezone is correct
 
-### ماه نمایش داده نمی‌شود
-- چند روز جلو/عقب بروید تا فاز تغییر کند
-- Refresh کنید
+### Moon Not Displaying
+- Navigate a few days forward/backward for phase change
+- Refresh
 
-### داده‌ها نمایش داده نمی‌شوند
-- اتصال اینترنت را چک کنید
-- کنسول را برای خطاها بررسی کنید
+### Data Not Displaying
+- Check internet connection
+- Check console for errors
 
-## 📄 لایسنس
+## 📄 License
 
-این پروژه تحت لایسنس MIT منتشر شده است.
+This project is released under the MIT License.
 
-## 🤝 مشارکت
+## 🤝 Contributing
 
-برای گزارش مشکلات یا پیشنهادات بهبود، لطفاً Issue ایجاد کنید.
+For bug reports or improvement suggestions, please create an Issue.
 
 ---
 
-ساخته شده با ❤️ و ☕
-
-## 🌐 زبان
-
-- [فارسی (Persian)](README.md)
-- [English](README.en.md)
+Made with ❤️ and ☕
 
