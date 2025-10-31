@@ -1602,7 +1602,6 @@ html {
 	display: grid; 
 	grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
 	gap: 10px;
-	touch-action: pan-y;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
 	scrollbar-color: rgba(124, 211, 255, 0.6) rgba(255, 255, 255, 0.08);
