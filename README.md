@@ -183,11 +183,18 @@ All calculations are based on the selected city's timezone.
 
 This project is released under the MIT License.
 
+## 👤 Author
+
+**Mohammadreza Abedinpour**
+
+- Website: [pimx.pages.dev](https://pimx.pages.dev)
+- GitHub: [@MOHAMMADREZAABEDINPOOR](https://github.com/MOHAMMADREZAABEDINPOOR)
+
 ## 🤝 Contributing
 
 For bug reports or improvement suggestions, please create an Issue.
 
 ---
 
-Made with ❤️ and ☕
+Made with ❤️ and ☕ by [Mohammadreza Abedinpour](https://pimx.pages.dev)
 
