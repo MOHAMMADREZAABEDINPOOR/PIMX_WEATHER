@@ -168,6 +168,9 @@ const translations = {
 		selectCityFirst: 'لطفاً ابتدا یک شهر را انتخاب کنید',
 		fetchError: 'خطا در دریافت اطلاعات شهر انتخاب‌شده',
 		loadingLocation: 'در حال دریافت اطلاعات موقعیت...',
+		loadingYourLocation: 'در حال گرفتن اطلاعات موقعیت شما',
+		loadingCityInfo: 'در حال دریافت اطلاعات شهر مورد نظر',
+		slowConnection: 'اتصال اینترنت ضعیف است',
 		noHistoricalData: 'داده‌های تاریخی برای این دوره در دسترس نیست',
 		noData: 'داده‌ای موجود نیست',
 		
@@ -178,6 +181,13 @@ const translations = {
 		// Loading
 		loadingTitle: 'PIMX_WEATHER',
 		loadingText: 'در حال بارگذاری اطلاعات...',
+		
+		// Location Permission
+		locationPermissionTitle: 'دسترسی به موقعیت مکانی',
+		locationPermissionMessage: 'برای نمایش دقیق وضعیت آب و هوا، لطفاً دسترسی به موقعیت مکانی و GPS را فعال کنید.',
+		locationPermissionAllow: 'اجازه دادن',
+		locationPermissionDeny: 'رد کردن',
+		locationPermissionNote: '💡 می‌توانید بعداً از دکمه "موقعیت من" استفاده کنید.',
 		
 		// Other
 		yourLocation: 'موقعیت شما',
@@ -411,6 +421,9 @@ en: {
 		selectCityFirst: 'Please select a city first',
 		fetchError: 'Error fetching city data',
 		loadingLocation: 'Getting location information...',
+		loadingYourLocation: 'Getting your location information',
+		loadingCityInfo: 'Getting information for selected city',
+		slowConnection: 'Slow internet connection',
 		noHistoricalData: 'Historical data not available for this period',
 		noData: 'No data available',
 		
@@ -421,6 +434,13 @@ en: {
 		// Loading
 		loadingTitle: 'PIMX_WEATHER',
 		loadingText: 'Loading data...',
+		
+		// Location Permission
+		locationPermissionTitle: 'Location Access',
+		locationPermissionMessage: 'To show accurate weather information, please enable location access and turn on your GPS.',
+		locationPermissionAllow: 'Allow',
+		locationPermissionDeny: 'Deny',
+		locationPermissionNote: '💡 You can use the "Use My Location" button later.',
 		
 		// Other
 		yourLocation: 'Your Location',

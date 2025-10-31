@@ -31,6 +31,21 @@
     </div>
   </div>
 
+  <!-- Location Permission Modal -->
+  <div id="locationPermissionModal" class="location-permission-modal" role="dialog" aria-labelledby="locationPermissionTitle" aria-modal="true">
+    <div class="location-permission-overlay"></div>
+    <div class="location-permission-card">
+      <div class="location-permission-icon">📍</div>
+      <h3 id="locationPermissionTitle" class="location-permission-title" data-i18n="locationPermissionTitle">دسترسی به موقعیت مکانی</h3>
+      <p class="location-permission-message" data-i18n="locationPermissionMessage">برای نمایش دقیق وضعیت آب و هوا، لطفاً دسترسی به موقعیت مکانی و GPS را فعال کنید.</p>
+      <p class="location-permission-note" data-i18n="locationPermissionNote">💡 می‌توانید بعداً از دکمه "موقعیت من" استفاده کنید.</p>
+      <div class="location-permission-buttons">
+        <button id="locationPermissionAllow" class="location-permission-btn allow" data-i18n="locationPermissionAllow">اجازه دادن</button>
+        <button id="locationPermissionDeny" class="location-permission-btn deny" data-i18n="locationPermissionDeny">رد کردن</button>
+      </div>
+    </div>
+  </div>
+
   <header class="app-header">
     <div class="brand">
       <span class="logo" aria-hidden="true">☀️</span>
@@ -539,6 +554,17 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Loading Notification Card -->
+  <div id="loadingCard" class="loading-notification-card" role="status" aria-live="polite">
+    <div class="loading-card-content">
+      <div class="loading-spinner"></div>
+      <div class="loading-card-text">
+        <div class="loading-card-message" id="loadingCardMessage">—</div>
+        <div class="loading-card-status" id="loadingCardStatus"></div>
+      </div>
+    </div>
+  </div>
 
   <footer class="app-footer">
     <p>&copy; 2025 <a href="https://pimx.pages.dev" target="_blank" rel="noopener noreferrer">PIMX</a>. All rights reserved.</p>

@@ -14,6 +14,8 @@ window.addEventListener('load', () => {
 		loadingScreen.classList.add('hidden');
 		setTimeout(() => {
 			loadingScreen.style.display = 'none';
+			// Show location permission modal after loading screen is hidden
+			// This will be handled in the initialization code below
 		}, 600);
 	}, 1500); // نمایش لودینگ حداقل 1.5 ثانیه
 });
@@ -112,6 +114,12 @@ const el = {
 	zoomLevel: document.getElementById('zoomLevel'),
 	sunAltitudeArc: document.getElementById('sunAltitudeArc'),
 	moonAltitudeArc: document.getElementById('moonAltitudeArc'),
+	loadingCard: document.getElementById('loadingCard'),
+	loadingCardMessage: document.getElementById('loadingCardMessage'),
+	loadingCardStatus: document.getElementById('loadingCardStatus'),
+	locationPermissionModal: document.getElementById('locationPermissionModal'),
+	locationPermissionAllow: document.getElementById('locationPermissionAllow'),
+	locationPermissionDeny: document.getElementById('locationPermissionDeny'),
 };
 
 let precipChartInstance = null;
@@ -268,6 +276,107 @@ function showToast(msg, timeout = 3000) {
 	el.toast.textContent = msg;
 	el.toast.classList.add('show');
 	setTimeout(() => el.toast.classList.remove('show'), timeout);
+}
+
+// Loading Card Functions
+let loadingTimeout = null;
+let slowConnectionShown = false;
+
+function showLoadingCard(message, showSlowConnection = true) {
+	if (!el.loadingCard || !el.loadingCardMessage) return;
+	
+	el.loadingCardMessage.textContent = message;
+	el.loadingCardStatus.textContent = '';
+	el.loadingCard.classList.add('show');
+	slowConnectionShown = false;
+	
+	// Show slow connection warning after 3 seconds
+	if (showSlowConnection) {
+		loadingTimeout = setTimeout(() => {
+			if (el.loadingCard.classList.contains('show') && !slowConnectionShown) {
+				el.loadingCardStatus.textContent = t('slowConnection');
+				slowConnectionShown = true;
+			}
+		}, 3000);
+	}
+}
+
+function hideLoadingCard() {
+	if (!el.loadingCard) return;
+	
+	el.loadingCard.classList.remove('show');
+	if (loadingTimeout) {
+		clearTimeout(loadingTimeout);
+		loadingTimeout = null;
+	}
+	slowConnectionShown = false;
+}
+
+// Location Permission Modal Functions
+let locationPermissionShown = false;
+
+function showLocationPermissionModal() {
+	if (!el.locationPermissionModal || locationPermissionShown) return;
+	
+	// Check if user has already denied location permission
+	const locationPermissionDenied = localStorage.getItem('locationPermissionDenied');
+	if (locationPermissionDenied === 'true') {
+		console.log('📍 Location permission previously denied, skipping modal');
+		return false;
+	}
+	
+	el.locationPermissionModal.classList.add('show');
+	locationPermissionShown = true;
+	return true;
+}
+
+function hideLocationPermissionModal() {
+	if (!el.locationPermissionModal) return;
+	
+	el.locationPermissionModal.classList.remove('show');
+}
+
+async function requestLocationPermission() {
+	hideLocationPermissionModal();
+	
+	try {
+		console.log('📍 Requesting location permission...');
+		const { lat, lon } = await getGeoPosition();
+		console.log('✅ Location permission granted:', lat, lon);
+		await loadByLocation(lat, lon);
+		const cityName = state.place?.name || t('yourLocation');
+		showToast(`${cityName} ${t('locationDetected')}`);
+		localStorage.setItem('locationPermissionDenied', 'false');
+		return true;
+	} catch (e) {
+		console.log('⚠️ Location permission denied:', e.message);
+		denyLocationPermission();
+		return false;
+	}
+}
+
+function denyLocationPermission() {
+	hideLocationPermissionModal();
+	localStorage.setItem('locationPermissionDenied', 'true');
+	console.log('📍 Location permission denied, will try IP location...');
+	
+	// Try IP location as fallback
+	(async () => {
+		try {
+			const ipLoc = await getIpLocation();
+			if (ipLoc) {
+				await loadByLocation(ipLoc.lat, ipLoc.lon);
+				const cityName = state.place?.name || t('yourLocation');
+				showToast(`${cityName} ${t('locationFromIP')}`);
+			} else {
+				showToast(t('locationFailed'));
+				await loadByLocation(35.6892, 51.3890); // Tehran as default
+			}
+		} catch (e) {
+			console.error('❌ Error loading location:', e);
+			await loadByLocation(35.6892, 51.3890); // Tehran as default
+		}
+	})();
 }
 
 // Moon phase calculation با Moon Age دقیق
@@ -1531,7 +1640,9 @@ async function fetchJson(url) {
 }
 
 async function geocodeSearch(q) {
-	const url = `${OPEN_METEO.search}?name=${encodeURIComponent(q)}&count=8&language=fa&format=json`;
+	// استفاده از زبان فعلی سایت برای جستجو
+	const lang = currentLang === 'fa' ? 'fa' : 'en';
+	const url = `${OPEN_METEO.search}?name=${encodeURIComponent(q)}&count=8&language=${lang}&format=json`;
 	const data = await fetchJson(url);
 	return (data.results || []).map(r => ({
 		name: r.name,
@@ -3224,6 +3335,7 @@ async function switchToCity(idx) {
 	state.activeCityIndex = idx;
 	localStorage.setItem('activeCityIndex', idx);
 	const city = state.savedCities[idx];
+	showLoadingCard(t('loadingCityInfo'));
 	try {
 		const weather = await fetchWeather(city.lat, city.lon);
 		const aqi = await fetchAirQuality(city.lat, city.lon);
@@ -3234,7 +3346,9 @@ async function switchToCity(idx) {
 		renderSelectedDay();
 		renderCityTabs();
 		await loadHistoricalData('week');
+		hideLoadingCard();
 	} catch (e) {
+		hideLoadingCard();
 		showToast(t('fetchError'));
 	}
 }
@@ -3267,8 +3381,10 @@ async function getIpLocation() {
 async function loadByLocation(lat, lon) {
 	console.log('📍 Loading location:', lat, lon);
 	
-	// نمایش موقعیت شما در حین دریافت اسم شهر
-	showToast(t('loadingLocation'));
+	// نمایش کارت بارگذاری فقط اگر قبلاً نمایش داده نشده باشد
+	if (!el.loadingCard || !el.loadingCard.classList.contains('show')) {
+		showLoadingCard(t('loadingLocation'));
+	}
 	
 	const placeMeta = await reverseGeocode(lat, lon);
 	
@@ -3313,15 +3429,22 @@ async function loadByLocation(lat, lon) {
 	
 	console.log('🌍 Final place name:', finalPlace.name);
 	
-	const weather = await fetchWeather(lat, lon);
-	const aqi = await fetchAirQuality(lat, lon);
-	state.place = { ...finalPlace, lat, lon, timezone: weather.timezone, isUserLocation: true };
-	state.weather = weather;
-	state.airQuality = aqi;
-	state.selectedDayIndex = 0;
-	renderSelectedDay();
-	localStorage.setItem('lastPlace', JSON.stringify(state.place));
-	await loadHistoricalData('week');
+	try {
+		const weather = await fetchWeather(lat, lon);
+		const aqi = await fetchAirQuality(lat, lon);
+		state.place = { ...finalPlace, lat, lon, timezone: weather.timezone, isUserLocation: true };
+		state.weather = weather;
+		state.airQuality = aqi;
+		state.selectedDayIndex = 0;
+		renderSelectedDay();
+		localStorage.setItem('lastPlace', JSON.stringify(state.place));
+		await loadHistoricalData('week');
+		hideLoadingCard();
+	} catch (e) {
+		hideLoadingCard();
+		showToast(t('fetchError'));
+		throw e;
+	}
 }
 
 // Search
@@ -3349,6 +3472,7 @@ function closeSuggestions() {
 async function selectPlace(p) {
 	closeSuggestions();
 	el.searchInput.value = `${p.name}${p.admin1 ? '، ' + p.admin1 : ''}`;
+	showLoadingCard(t('loadingCityInfo'));
 	try {
 		const weather = await fetchWeather(p.lat, p.lon);
 		const aqi = await fetchAirQuality(p.lat, p.lon);
@@ -3359,7 +3483,9 @@ async function selectPlace(p) {
 		renderSelectedDay();
 		localStorage.setItem('lastPlace', JSON.stringify(state.place));
 		await loadHistoricalData('week');
+		hideLoadingCard();
 	} catch (e) {
+		hideLoadingCard();
 		showToast(t('fetchError'));
 	}
 }
@@ -3378,13 +3504,26 @@ document.addEventListener('click', (e) => {
 	if (!el.suggestions.contains(e.target) && e.target !== el.searchInput) closeSuggestions();
 });
 
+// Location Permission Modal Event Listeners
+if (el.locationPermissionAllow) {
+	el.locationPermissionAllow.addEventListener('click', requestLocationPermission);
+}
+
+if (el.locationPermissionDeny) {
+	el.locationPermissionDeny.addEventListener('click', denyLocationPermission);
+}
+
 el.useLocation.addEventListener('click', async () => {
+	// نمایش کارت بارگذاری بلافاصله
+	showLoadingCard(t('loadingYourLocation'));
+	
 	try {
 		const { lat, lon } = await getGeoPosition();
 		await loadByLocation(lat, lon);
 		const cityName = state.place?.name || t('yourLocation');
 		showToast(`${cityName} ${t('locationDetected')}`);
 	} catch {
+		hideLoadingCard(); // Hide if location was denied
 		showToast(t('locationDenied'));
 		const ipLoc = await getIpLocation();
 		if (ipLoc) { 
@@ -3789,23 +3928,44 @@ function improveScrollBehavior() {
 	}
 	
 	if (!state.weather) {
-		console.log('🌍 No weather data loaded yet, detecting location...');
-		try {
-			console.log('📍 Trying geolocation...');
-			const { lat, lon } = await getGeoPosition();
-			console.log('✅ Geolocation detected:', lat, lon);
-			await loadByLocation(lat, lon);
-		} catch (e) {
-			console.log('⚠️ Geolocation failed, trying IP location...', e.message);
-			const ipLoc = await getIpLocation();
-			if (ipLoc) {
-				console.log('✅ IP location detected:', ipLoc.lat, ipLoc.lon);
-				await loadByLocation(ipLoc.lat, ipLoc.lon);
-			} else {
-				console.log('⚠️ IP location failed, loading Tehran...');
-				await loadByLocation(35.6892, 51.3890);
+		console.log('🌍 No weather data loaded yet, checking location permission...');
+		
+		// Wait for loading screen to be hidden before showing modal
+		const loadingScreen = document.getElementById('loadingScreen');
+		const waitForLoadingScreen = () => {
+			if (loadingScreen && loadingScreen.style.display !== 'none' && !loadingScreen.classList.contains('hidden')) {
+				// Loading screen still visible, wait a bit more
+				setTimeout(waitForLoadingScreen, 100);
+				return;
 			}
-		}
+			
+			// Loading screen is hidden, now show modal
+			const modalShown = showLocationPermissionModal();
+			
+			if (!modalShown) {
+				// If modal was not shown (permission previously denied), try IP location
+				(async () => {
+					try {
+						console.log('📍 Trying IP location...');
+						const ipLoc = await getIpLocation();
+						if (ipLoc) {
+							console.log('✅ IP location detected:', ipLoc.lat, ipLoc.lon);
+							await loadByLocation(ipLoc.lat, ipLoc.lon);
+						} else {
+							console.log('⚠️ IP location failed, loading Tehran...');
+							await loadByLocation(35.6892, 51.3890);
+						}
+					} catch (e) {
+						console.error('❌ Error loading location:', e);
+						await loadByLocation(35.6892, 51.3890);
+					}
+				})();
+			}
+			// If modal was shown, wait for user interaction (handled by button click handlers)
+		};
+		
+		// Start checking after a short delay to ensure loading screen has time to hide
+		setTimeout(waitForLoadingScreen, 100);
 	}
 	
 	console.log('✅ App initialized successfully!');
