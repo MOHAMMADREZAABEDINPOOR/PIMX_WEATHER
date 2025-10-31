@@ -115,6 +115,7 @@ const translations = {
 	moonWaningCrescent: 'هلال دوم',
 	
 	// Weather conditions
+		moonlit: 'مهتابی',
 		sunny: 'آفتابی',
 		partlyCloudy: 'صاف تا کمی ابری',
 		cloudy: 'ابری',
@@ -167,6 +168,8 @@ const translations = {
 		selectCityFirst: 'لطفاً ابتدا یک شهر را انتخاب کنید',
 		fetchError: 'خطا در دریافت اطلاعات شهر انتخاب‌شده',
 		loadingLocation: 'در حال دریافت اطلاعات موقعیت...',
+		noHistoricalData: 'داده‌های تاریخی برای این دوره در دسترس نیست',
+		noData: 'داده‌ای موجود نیست',
 		
 		// Footer
 		copyright: '© 2025',
@@ -355,6 +358,7 @@ en: {
 	moonWaningCrescent: 'Waning Crescent',
 	
 	// Weather conditions
+		moonlit: 'Moonlit',
 		sunny: 'Sunny',
 		partlyCloudy: 'Partly Cloudy',
 		cloudy: 'Cloudy',
@@ -407,6 +411,8 @@ en: {
 		selectCityFirst: 'Please select a city first',
 		fetchError: 'Error fetching city data',
 		loadingLocation: 'Getting location information...',
+		noHistoricalData: 'Historical data not available for this period',
+		noData: 'No data available',
 		
 		// Footer
 		copyright: '© 2025',

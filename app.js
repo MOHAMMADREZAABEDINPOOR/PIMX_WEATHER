@@ -71,6 +71,7 @@ const el = {
 	icon: document.getElementById('currentIcon'),
 	temp: document.getElementById('temp'),
 	condition: document.getElementById('condition'),
+	tempRange: document.getElementById('tempRange'),
 	feelsLike: document.getElementById('feelsLike'),
 	humidity: document.getElementById('humidity'),
 	wind: document.getElementById('wind'),
@@ -199,6 +200,32 @@ const debounce = (fn, ms = 250) => {
 };
 
 // Format number based on current language
+// تبدیل جهت باد از درجه به نام جهت کامل به فارسی
+function getWindDirection(deg) {
+	if (deg == null || isNaN(deg)) return null;
+	
+	// نرمال‌سازی درجه به 0-360
+	const normalized = Math.round(((deg % 360) + 360) % 360);
+	
+	// تقسیم‌بندی 360 درجه به 8 جهت اصلی
+	const directions = [
+		{ name: 'شمال', en: 'N' },
+		{ name: 'شمال شرقی', en: 'NE' },
+		{ name: 'شرق', en: 'E' },
+		{ name: 'جنوب شرقی', en: 'SE' },
+		{ name: 'جنوب', en: 'S' },
+		{ name: 'جنوب غربی', en: 'SW' },
+		{ name: 'غرب', en: 'W' },
+		{ name: 'شمال غربی', en: 'NW' }
+	];
+	const index = Math.round(normalized / 45) % 8;
+	
+	return {
+		name: currentLang === 'fa' ? directions[index].name : directions[index].en,
+		deg: normalized
+	};
+}
+
 const formatNumber = (v) => {
 	if (v == null) return '—';
 	if (currentLang === 'fa') {
@@ -220,7 +247,9 @@ const tzDate = (iso, tz) => new Date(new Date(iso).toLocaleString('en-US', { tim
 const fmtTime = (iso, tz) => {
 	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
 	const hour12 = currentLang !== 'fa'; // Use 12-hour for English, 24-hour for Persian
-	return tzDate(iso, tz).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 });
+	// استفاده مستقیم از Date object برای زمان دقیق
+	const date = new Date(iso);
+	return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12, timeZone: tz });
 };
 const fmtDayName = (iso, tz) => {
 	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
@@ -518,19 +547,10 @@ function calculateSunAltitude(date, lat, lon) {
 	return { altitude, azimuth: normalizeAngle(azimuth) };
 }
 
-// محاسبه تقریبی ارتفاع و سمت ماه
-function calculateMoonAltitude(date, lat, lon, moonPhase) {
-	const sunAlt = calculateSunAltitude(date, lat, lon);
-	
-	// تقریب ساده: ماه در فاز کامل (0.5) در مقابل خورشید است
-	const phaseDeg = moonPhase * 360;
-	const moonAzimuth = normalizeAngle(sunAlt.azimuth + phaseDeg);
-	
-	// تقریب ارتفاع: بر اساس فاز و موقعیت خورشید
-	const oppositeAltitude = -sunAlt.altitude;
-	const moonAltitude = oppositeAltitude + (Math.sin(phaseDeg * Math.PI / 180) * 15);
-	
-	return { altitude: moonAltitude, azimuth: moonAzimuth };
+// محاسبه دقیق ارتفاع و سمت ماه
+function calculateMoonAltitude(date, lat, lon) {
+	const moonPos = calculateMoonPosition(date, lat, lon);
+	return { altitude: moonPos.altitude, azimuth: moonPos.azimuth };
 }
 
 // رسم قوس نمایش ارتفاع (altitude arc)
@@ -612,42 +632,191 @@ function renderAltitudeArc(container, altitude, color) {
 	container.appendChild(svg);
 }
 
-// Moon rise/set (simplified approximation)
-function getMoonRiseSet(date, lat, lon, sunrise, sunset) {
-	const moonPhase = getMoonPhase(date);
-	const sr = new Date(sunrise);
-	const ss = new Date(sunset);
-	const dayLength = (ss - sr) / 1000 / 3600;
-	
-	// تقریب ساده: ماه معمولا با تاخیر نسبت به خورشید طلوع می‌کند
-	const moonRise = new Date(sr.getTime() + (moonPhase.phase * 24 * 3600 * 1000));
-	const moonSet = new Date(ss.getTime() + (moonPhase.phase * 24 * 3600 * 1000));
-	
-	return { moonrise: moonRise.toISOString(), moonset: moonSet.toISOString() };
-}
-
-// محاسبه فاصله ماه از زمین (تقریبی)
-function calculateMoonDistance(date) {
-	// محاسبه بر اساس Julian Day
+// محاسبه دقیق موقعیت ماه (Meeus algorithm)
+function calculateMoonPosition(date, lat, lon) {
 	const jd = dateToJulianDay(date);
 	const T = (jd - 2451545.0) / 36525.0;
 	
 	// Mean longitude of Moon
-	const Lm = normalizeAngle(218.316 + 481267.881 * T);
+	const Lp = normalizeAngle(218.3164477 + 481267.88123421 * T - 0.0015786 * T * T + T * T * T / 538841 - T * T * T * T / 65194000);
 	
-	// Mean anomaly of Moon
-	const M = normalizeAngle(134.963 + 477198.868 * T) * Math.PI / 180;
+	// Mean elongation of Moon
+	const D = normalizeAngle(297.8501921 + 445267.1114034 * T - 0.0018819 * T * T + T * T * T / 545868 - T * T * T * T / 113065000);
 	
-	// Mean elongation
-	const D = normalizeAngle(297.850 + 445267.112 * T) * Math.PI / 180;
+	// Sun's mean anomaly
+	const M = normalizeAngle(357.5291092 + 35999.0502909 * T - 0.0001536 * T * T + T * T * T / 24490000);
 	
-	// فاصله ماه (km) - فرمول ساده شده
-	// فاصله متوسط: 384,400 km
-	// بیشترین: ~406,700 km (apogee)
-	// کمترین: ~356,500 km (perigee)
-	const distance = 385000 - 21000 * Math.cos(M) - 3700 * Math.cos(2*D - M);
+	// Moon's mean anomaly
+	const Mp = normalizeAngle(134.9633964 + 477198.8675055 * T + 0.0087414 * T * T + T * T * T / 69699 - T * T * T * T / 14712000);
 	
-	return distance;
+	// Moon's argument of latitude
+	const F = normalizeAngle(93.2720950 + 483202.0175233 * T - 0.0036539 * T * T - T * T * T / 3526000 + T * T * T * T / 863310000);
+	
+	// Convert to radians
+	const Lp_rad = Lp * Math.PI / 180;
+	const D_rad = D * Math.PI / 180;
+	const M_rad = M * Math.PI / 180;
+	const Mp_rad = Mp * Math.PI / 180;
+	const F_rad = F * Math.PI / 180;
+	
+	// Longitude perturbations (major terms)
+	let sigmaL = 0;
+	sigmaL += 6288774 * Math.sin(Mp_rad);
+	sigmaL += 1274027 * Math.sin(2 * D_rad - Mp_rad);
+	sigmaL += 658314 * Math.sin(2 * D_rad);
+	sigmaL += 213618 * Math.sin(2 * Mp_rad);
+	sigmaL += -185116 * Math.sin(M_rad);
+	sigmaL += -114332 * Math.sin(2 * F_rad);
+	
+	// Latitude perturbations (major terms)
+	let sigmaB = 0;
+	sigmaB += 5128122 * Math.sin(F_rad);
+	sigmaB += 280602 * Math.sin(Mp_rad + F_rad);
+	sigmaB += 277693 * Math.sin(Mp_rad - F_rad);
+	sigmaB += 173237 * Math.sin(2 * D_rad - F_rad);
+	sigmaB += 55413 * Math.sin(2 * D_rad - Mp_rad + F_rad);
+	
+	// Distance perturbations (major terms)
+	let sigmaR = 0;
+	sigmaR += -20905355 * Math.cos(Mp_rad);
+	sigmaR += -3699111 * Math.cos(2 * D_rad - Mp_rad);
+	sigmaR += -2955968 * Math.cos(2 * D_rad);
+	sigmaR += -569925 * Math.cos(2 * Mp_rad);
+	
+	// Moon's geocentric longitude
+	const lambda = Lp + sigmaL / 1000000;
+	const lambda_rad = lambda * Math.PI / 180;
+	
+	// Moon's geocentric latitude
+	const beta = sigmaB / 1000000;
+	const beta_rad = beta * Math.PI / 180;
+	
+	// Distance to moon (km)
+	const distance = 385000.56 + sigmaR / 1000;
+	
+	// Obliquity of ecliptic
+	const epsilon = (23.439291 - 0.0130042 * T) * Math.PI / 180;
+	
+	// Convert to equatorial coordinates
+	const RA = Math.atan2(
+		Math.sin(lambda_rad) * Math.cos(epsilon) - Math.tan(beta_rad) * Math.sin(epsilon),
+		Math.cos(lambda_rad)
+	);
+	
+	const Dec = Math.asin(
+		Math.sin(beta_rad) * Math.cos(epsilon) + Math.cos(beta_rad) * Math.sin(epsilon) * Math.sin(lambda_rad)
+	);
+	
+	// Local Sidereal Time
+	const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+	const GMST = normalizeAngle(280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - T * T * T / 38710000);
+	const LST = normalizeAngle(GMST + lon);
+	const LST_rad = LST * Math.PI / 180;
+	
+	// Hour Angle
+	const H = LST_rad - RA;
+	
+	// Convert to horizontal coordinates
+	const lat_rad = lat * Math.PI / 180;
+	
+	const altitude = Math.asin(
+		Math.sin(lat_rad) * Math.sin(Dec) + Math.cos(lat_rad) * Math.cos(Dec) * Math.cos(H)
+	) * 180 / Math.PI;
+	
+	const azimuth = normalizeAngle(Math.atan2(
+		Math.sin(H),
+		Math.cos(H) * Math.sin(lat_rad) - Math.tan(Dec) * Math.cos(lat_rad)
+	) * 180 / Math.PI + 180);
+	
+	return { altitude, azimuth, distance, RA, Dec };
+}
+
+// محاسبه دقیق طلوع و غروب ماه
+function getMoonRiseSet(date, lat, lon) {
+	const dateStart = new Date(date);
+	dateStart.setHours(0, 0, 0, 0);
+	
+	let moonrise = null;
+	let moonset = null;
+	let wasAbove = false;
+	let isAbove = false;
+	
+	// Check every 10 minutes throughout the day
+	for (let hour = 0; hour < 24; hour += 0.167) { // 0.167 hour = 10 minutes
+		const checkDate = new Date(dateStart.getTime() + hour * 3600000);
+		const moonPos = calculateMoonPosition(checkDate, lat, lon);
+		
+		// Moon is above horizon if altitude > -0.5 degrees (accounting for refraction)
+		isAbove = moonPos.altitude > -0.5;
+		
+		// Detect rise (transition from below to above horizon)
+		if (!wasAbove && isAbove && !moonrise) {
+			// Refine to minute precision
+			for (let min = 0; min < 10; min++) {
+				const refineDate = new Date(checkDate.getTime() - 10 * 60000 + min * 60000);
+				const refinePos = calculateMoonPosition(refineDate, lat, lon);
+				if (refinePos.altitude > -0.5) {
+					moonrise = refineDate.toISOString();
+					break;
+				}
+			}
+		}
+		
+		// Detect set (transition from above to below horizon)
+		if (wasAbove && !isAbove && !moonset) {
+			// Refine to minute precision
+			for (let min = 0; min < 10; min++) {
+				const refineDate = new Date(checkDate.getTime() - 10 * 60000 + min * 60000);
+				const refinePos = calculateMoonPosition(refineDate, lat, lon);
+				if (refinePos.altitude <= -0.5) {
+					moonset = refineDate.toISOString();
+					break;
+				}
+			}
+		}
+		
+		wasAbove = isAbove;
+	}
+	
+	// If no rise/set found, moon might be circumpolar (always up or always down)
+	if (!moonrise) {
+		const midDayPos = calculateMoonPosition(new Date(dateStart.getTime() + 12 * 3600000), lat, lon);
+		if (midDayPos.altitude > 0) {
+			// Moon is up all day
+			moonrise = dateStart.toISOString();
+		} else {
+			// Moon is down all day
+			moonrise = new Date(dateStart.getTime() + 12 * 3600000).toISOString();
+		}
+	}
+	
+	if (!moonset) {
+		const midDayPos = calculateMoonPosition(new Date(dateStart.getTime() + 12 * 3600000), lat, lon);
+		if (midDayPos.altitude > 0) {
+			// Moon is up all day
+			moonset = new Date(dateStart.getTime() + 23.99 * 3600000).toISOString();
+		} else {
+			// Moon is down all day
+			moonset = new Date(dateStart.getTime() + 12 * 3600000).toISOString();
+		}
+	}
+	
+	console.log('🌙 Moon rise/set calculated:');
+	console.log('  Moonrise:', moonrise);
+	console.log('  Moonset:', moonset);
+	
+	return { moonrise, moonset };
+}
+
+// محاسبه دقیق فاصله ماه از زمین
+function calculateMoonDistance(date) {
+	// استفاده از تابع دقیق محاسبه موقعیت ماه
+	// از موقعیت فعلی کاربر استفاده می‌کنیم، یا اگر موجود نبود از موقعیت پیش‌فرض
+	const lat = state.place?.lat || 35.6892;
+	const lon = state.place?.lon || 51.3890;
+	
+	const moonPos = calculateMoonPosition(date, lat, lon);
+	return moonPos.distance;
 }
 
 // UV Index label
@@ -708,14 +877,14 @@ function weatherCodeToInfo(code, isDay = 1) {
 	};
 	
 	const iconMap = {
-		0: 'sunny', 1: 'sunny', 2: 'cloudy', 3: 'cloudy',
+		0: 'sunny', 1: 'partly-cloudy', 2: 'cloudy', 3: 'cloudy',
 		45: 'cloudy', 48: 'cloudy',
 		51: 'rainy', 53: 'rainy', 55: 'rainy', 56: 'rainy', 57: 'rainy',
 		61: 'rainy', 63: 'rainy', 65: 'rainy', 66: 'rainy', 67: 'rainy',
 		71: 'snowy', 73: 'snowy', 75: 'snowy', 77: 'snowy',
 		80: 'rainy', 81: 'rainy', 82: 'rainy',
 		85: 'snowy', 86: 'snowy',
-		95: 'rainy', 96: 'rainy', 99: 'rainy'
+		95: 'thunderstorm', 96: 'thunderstorm', 99: 'thunderstorm'
 	};
 	
 	const key = iconMap[code] || 'cloudy';
@@ -736,6 +905,16 @@ function renderIcon(container, type, size = 'large') {
 		container.appendChild(sun);
 		return;
 	}
+	if (type === 'partly-cloudy') {
+		// خورشید پشت ابر
+		const sun = document.createElement('div');
+		sun.className = 'sun';
+		sun.innerHTML = '<div class="core"></div><div class="rays"></div>';
+		container.appendChild(sun);
+		const big = document.createElement('div'); big.className = 'cloud big';
+		container.appendChild(big);
+		return;
+	}
 	const big = document.createElement('div'); big.className = 'cloud big';
 	const small = document.createElement('div'); small.className = 'cloud small';
 	container.appendChild(big); container.appendChild(small);
@@ -749,10 +928,28 @@ function renderIcon(container, type, size = 'large') {
 			container.appendChild(d);
 		}
 	}
+	if (type === 'thunderstorm') {
+		// رعد و برق
+		for (let i = 0; i < 16; i++) {
+			const d = document.createElement('div');
+			d.className = 'drop';
+			d.style.left = `${18 + Math.random() * 60}%`;
+			d.style.animationDelay = `${Math.random() * 1.0}s`;
+			d.style.animationDuration = `${0.9 + Math.random() * 0.6}s`;
+			container.appendChild(d);
+		}
+		// اضافه کردن یک برق کوچک
+		const bolt = document.createElement('div');
+		bolt.className = 'bolt';
+		bolt.innerHTML = '⚡';
+		container.appendChild(bolt);
+	}
 	if (type === 'snowy') {
 		for (let i = 0; i < 12; i++) {
 			const f = document.createElement('div');
 			f.className = 'flake';
+			const span = document.createElement('span');
+			f.appendChild(span);
 			f.style.left = `${18 + Math.random() * 60}%`;
 			f.style.animationDelay = `${Math.random() * 1.8}s`;
 			f.style.animationDuration = `${2.2 + Math.random() * 1.4}s`;
@@ -763,14 +960,566 @@ function renderIcon(container, type, size = 'large') {
 
 function setTheme(info) {
 	const b = document.body;
-	b.classList.remove('theme-default', 'theme-sunny-day', 'theme-cloudy', 'theme-rainy', 'theme-snowy', 'theme-night');
+	
+	// حذف انیمیشن‌های قبلی
+	document.querySelectorAll('.animated-sun, .animated-cloud, .animated-bird, .animated-dark-cloud, .animated-rain-drop, .animated-rain-cloud, .animated-lightning, .animated-snowflake, .animated-moon, .animated-star, .animated-shooting-star, .static-rain-cloud, .static-snow-cloud').forEach(el => el.remove());
+	
+	b.classList.remove('theme-default', 'theme-sunny-day', 'theme-partly-cloudy', 'theme-cloudy', 'theme-rainy', 'theme-thunderstorm', 'theme-snowy', 'theme-night');
+	
 	switch (info.theme) {
-		case 'sunny-day': b.classList.add('theme-sunny-day'); break;
-		case 'cloudy-day': b.classList.add('theme-cloudy'); break;
-		case 'rainy-day': b.classList.add('theme-rainy'); break;
-		case 'snowy-day': b.classList.add('theme-snowy'); break;
-		case 'night': b.classList.add('theme-night'); break;
+		case 'sunny-day': 
+			b.classList.add('theme-sunny-day');
+			createDayAnimations();
+			break;
+		case 'partly-cloudy-day':
+			b.classList.add('theme-partly-cloudy');
+			createPartlyCloudyAnimations();
+			break;
+		case 'cloudy-day': 
+			b.classList.add('theme-cloudy');
+			createCloudyAnimations();
+			break;
+		case 'rainy-day': 
+			b.classList.add('theme-rainy');
+			createRainyAnimations();
+			break;
+		case 'thunderstorm-day':
+			b.classList.add('theme-thunderstorm');
+			createThunderstormAnimations();
+			break;
+		case 'snowy-day':
+			b.classList.add('theme-snowy');
+			createSnowyAnimations();
+			break;
+		case 'night': 
+			b.classList.add('theme-night');
+			createNightAnimations();
+			break;
 		default: b.classList.add('theme-default');
+	}
+}
+
+// ایجاد انیمیشن‌های خورشید پشت ابر
+function createPartlyCloudyAnimations() {
+	// ایجاد خورشید
+	const sun = document.createElement('div');
+	sun.className = 'animated-sun';
+	document.body.appendChild(sun);
+	
+	// تشخیص اندازه صفحه برای responsive
+	const width = window.innerWidth;
+	let cloudCount;
+	
+	if (width <= 768) {
+		// موبایل: 6 ابر
+		cloudCount = 6;
+	} else if (width <= 1024) {
+		// تبلت: 12 ابر
+		cloudCount = 12;
+	} else {
+		// دسکتاپ: 40 ابر
+		cloudCount = 40;
+	}
+	
+	// ایجاد ابرهای متحرک از چپ به راست
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'animated-dark-cloud';
+		
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.top = `${10 + Math.random() * 50}%`;
+		cloud.style.left = `-200px`; // شروع از خارج صفحه سمت چپ
+		cloud.style.animation = `cloudMoveLeftToRight ${25 + Math.random() * 15}s linear infinite`;
+		cloud.style.animationDelay = `${i * 3}s`;
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد 2 پرنده
+	for (let i = 0; i < 2; i++) {
+		const bird = document.createElement('div');
+		bird.className = 'animated-bird';
+		bird.style.top = `${20 + Math.random() * 30}%`;
+		bird.style.animationDelay = `${i * 8 + Math.random() * 5}s`;
+		bird.style.animationDuration = `${25 + Math.random() * 10}s`;
+		document.body.appendChild(bird);
+	}
+}
+
+// ایجاد انیمیشن‌های ابری - با CSS خالص
+function createCloudyAnimations() {
+	console.log('🌥️ Creating cloudy animations...');
+	
+	// تشخیص اندازه صفحه برای responsive
+	const width = window.innerWidth;
+	console.log('📱 Screen width:', width, 'px');
+	let layer1Count, layer2Count, layer3Count, spacingMultiplier;
+	
+	if (width <= 768) {
+		// موبایل: 6 ابر
+		layer1Count = 2;
+		layer2Count = 2;
+		layer3Count = 2;
+		spacingMultiplier = 50;
+	} else if (width <= 1024) {
+		// تبلت: 12 ابر
+		layer1Count = 4;
+		layer2Count = 4;
+		layer3Count = 4;
+		spacingMultiplier = 25;
+	} else {
+		// دسکتاپ: 40 ابر
+		layer1Count = 14;
+		layer2Count = 13;
+		layer3Count = 13;
+		spacingMultiplier = 7;
+	}
+	
+	// محاسبه top position بر اساس ارتفاع navbar
+	const navbarHeight = document.querySelector('.app-header')?.offsetHeight || 80;
+	// در موبایل 50 پیکسل مارجین بالا اضافه می‌کنیم
+	const mobileMargin = width <= 768 ? -120 : 0;
+	const layer1Top = `${navbarHeight + -5 + mobileMargin}px`;  // مارجین از navbar
+	const layer2Top = `${navbarHeight + -40 + mobileMargin}px`;
+	const layer3Top = `${navbarHeight + -110 + mobileMargin}px`;
+	
+	// لایه اول
+	for (let i = 0; i < layer1Count; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'animated-dark-cloud';
+		
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.top = layer1Top;
+		cloud.style.left = `${i * spacingMultiplier + Math.random() * 3}%`;
+		cloud.style.opacity = '1';
+		cloud.style.animationDelay = `${i * 1.2}s`;
+		cloud.style.animationDuration = `${25 + Math.random() * 15}s`;
+		cloud.style.animationName = 'cloudFloatSlow';
+		cloud.style.animationTimingFunction = 'ease-in-out';
+		cloud.style.animationIterationCount = 'infinite';
+		document.body.appendChild(cloud);
+	}
+	
+	// لایه دوم
+	for (let i = 0; i < layer2Count; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'animated-dark-cloud';
+		
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.top = layer2Top;
+		cloud.style.left = `${i * spacingMultiplier + spacingMultiplier/2 + Math.random() * 3}%`;
+		cloud.style.opacity = '1';
+		cloud.style.animationDelay = `${i * 1.2 + 0.6}s`;
+		cloud.style.animationDuration = `${28 + Math.random() * 15}s`;
+		cloud.style.animationName = 'cloudFloatSlow';
+		cloud.style.animationTimingFunction = 'ease-in-out';
+		cloud.style.animationIterationCount = 'infinite';
+		document.body.appendChild(cloud);
+	}
+	
+	// لایه سوم
+	for (let i = 0; i < layer3Count; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'animated-dark-cloud';
+		
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.top = layer3Top;
+		cloud.style.left = `${i * spacingMultiplier + Math.random() * 4}%`;
+		cloud.style.opacity = '1';
+		cloud.style.animationDelay = `${i * 1.2 + 0.3}s`;
+		cloud.style.animationDuration = `${30 + Math.random() * 15}s`;
+		cloud.style.animationName = 'cloudFloatSlow';
+		cloud.style.animationTimingFunction = 'ease-in-out';
+		cloud.style.animationIterationCount = 'infinite';
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد 2 پرنده که گاهی پرواز می‌کنن
+	for (let i = 0; i < 2; i++) {
+		const bird = document.createElement('div');
+		bird.className = 'animated-bird';
+		bird.style.top = `${25 + Math.random() * 30}%`;
+		bird.style.animationDelay = `${i * 10 + Math.random() * 8}s`;
+		bird.style.animationDuration = `${26 + Math.random() * 12}s`;
+		document.body.appendChild(bird);
+	}
+	
+	const totalClouds = layer1Count + layer2Count + layer3Count;
+	console.log(`✅ Created ${totalClouds} clouds (${layer1Count}+${layer2Count}+${layer3Count})`);
+}
+
+// ایجاد انیمیشن‌های بارانی - با CSS خالص
+function createRainyAnimations() {
+	// تشخیص اندازه صفحه برای responsive
+	const width = window.innerWidth;
+	let cloudCount, rainDropCount;
+	
+	if (width <= 768) {
+		// موبایل: 6 ابر
+		cloudCount = 6;
+		rainDropCount = 12;
+	} else if (width <= 1024) {
+		// تبلت: 12 ابر
+		cloudCount = 12;
+		rainDropCount = 24;
+	} else {
+		// دسکتاپ: 40 ابر
+		cloudCount = 40;
+		rainDropCount = 80;
+	}
+	
+	// ایجاد ابرهای تیره ثابت در بالای صفحه بدون حرکت - لایه اول
+	const screenWidth = window.innerWidth;
+	const cloudWidth = 200;
+	const spacing = cloudCount > 1 ? (screenWidth - (cloudWidth * cloudCount)) / (cloudCount - 1) : 0;
+	
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'static-rain-cloud';
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
+		cloud.style.top = '-20px'; // دقیقا زیر navbar
+		
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد ابرهای تیره ثابت - لایه دوم (10 پیکسل پایین‌تر)
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'static-rain-cloud';
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
+		cloud.style.top = '40px'; // 10 پیکسل پایین‌تر از لایه اول
+		
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد قطره‌های باران که دقیقا از زیر ابرها می‌ریزن
+	const cloudCenterY = 60 + 50; // وسط ابر (top + نصف ارتفاع ابر)
+	
+	// برای هر ابر، چند قطره باران از زیرش می‌ریزد
+	for (let i = 0; i < rainDropCount; i++) {
+		const drop = document.createElement('div');
+		drop.className = 'animated-rain-drop';
+		
+		// پیدا کردن موقعیت یکی از ابرها (cloudCount ابر در 2 لایه)
+		const cloudIndex = Math.floor(i / 2);
+		const xPosition = (cloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
+		
+		// قطرات از زیر ابرها شروع می‌کنن
+		drop.style.left = `${xPosition + (Math.random() * cloudWidth - cloudWidth/2)}px`;
+		drop.style.top = `${cloudCenterY}px`; // از زیر ابرها
+		
+		// تنوع در سرعت و تاخیر
+		drop.style.animationDelay = `${Math.random() * 3}s`;
+		drop.style.animationDuration = `${1.0 + Math.random() * 0.8}s`;
+		
+		document.body.appendChild(drop);
+	}
+	
+	// ایجاد رعد و برق که از ابرها می‌زنن
+	const lightningCount = width <= 768 ? 2 : (width <= 1024 ? 3 : 4);
+	for (let i = 0; i < lightningCount; i++) {
+		const lightning = document.createElement('div');
+		lightning.className = 'animated-lightning';
+		
+		// رعد و برق از زیر یکی از ابرها شروع می‌شه
+		const randomCloudIndex = Math.floor(Math.random() * cloudCount);
+		const xPosition = (randomCloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
+		lightning.style.left = `${xPosition}px`;
+		lightning.style.top = `${cloudCenterY}px`; // از زیر ابرها
+		
+		// هر رعد و برق با تاخیر متفاوت
+		lightning.style.animationDelay = `${i * 2 + Math.random() * 2}s`;
+		
+		document.body.appendChild(lightning);
+	}
+}
+
+// ایجاد انیمیشن‌های رعد و برق (طوفان) - با CSS خالص
+function createThunderstormAnimations() {
+	// تشخیص اندازه صفحه برای responsive
+	const width = window.innerWidth;
+	let cloudCount, rainDropCount;
+	
+	if (width <= 768) {
+		// موبایل: 6 ابر
+		cloudCount = 6;
+		rainDropCount = 20;
+	} else if (width <= 1024) {
+		// تبلت: 12 ابر
+		cloudCount = 12;
+		rainDropCount = 40;
+	} else {
+		// دسکتاپ: 40 ابر
+		cloudCount = 40;
+		rainDropCount = 100;
+	}
+	
+	// ایجاد ابرهای تیره ثابت در بالای صفحه بدون حرکت - لایه اول
+	const screenWidth = window.innerWidth;
+	const cloudWidth = 200;
+	const spacing = cloudCount > 1 ? (screenWidth - (cloudWidth * cloudCount)) / (cloudCount - 1) : 0;
+	
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'static-rain-cloud';
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
+		cloud.style.top = '-20px'; // دقیقا زیر navbar
+		
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد ابرهای تیره ثابت - لایه دوم (10 پیکسل پایین‌تر)
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'static-rain-cloud';
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
+		cloud.style.top = '40px'; // 10 پیکسل پایین‌تر از لایه اول
+		
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد قطره‌های باران شدید که دقیقا از زیر ابرها می‌ریزن
+	const cloudCenterY = 60 + 50; // وسط ابر (top + نصف ارتفاع ابر)
+	
+	// برای هر ابر، چند قطره باران از زیرش می‌ریزد - باران شدیدتر با قطرات بیشتر
+	for (let i = 0; i < rainDropCount; i++) {
+		const drop = document.createElement('div');
+		drop.className = 'animated-rain-drop';
+		
+		// پیدا کردن موقعیت یکی از ابرها (cloudCount ابر در 2 لایه)
+		const cloudIndex = Math.floor(i / 2);
+		const xPosition = (cloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
+		
+		// قطرات از زیر ابرها شروع می‌کنن
+		drop.style.left = `${xPosition + (Math.random() * cloudWidth - cloudWidth/2)}px`;
+		drop.style.top = `${cloudCenterY}px`; // از زیر ابرها
+		
+		// باران شدیدتر با سرعت بیشتر
+		drop.style.animationDelay = `${Math.random() * 2}s`;
+		drop.style.animationDuration = `${0.8 + Math.random() * 0.6}s`;
+		
+		document.body.appendChild(drop);
+	}
+	
+	// ایجاد رعد و برق قوی که از ابرها می‌زنن
+	const lightningCount = width <= 768 ? 4 : (width <= 1024 ? 8 : 12);
+	for (let i = 0; i < lightningCount; i++) {
+		const lightning = document.createElement('div');
+		lightning.className = 'animated-lightning';
+		
+		// رعد و برق از زیر یکی از ابرها شروع می‌شه
+		const randomCloudIndex = Math.floor(Math.random() * cloudCount);
+		const xPosition = (randomCloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
+		lightning.style.left = `${xPosition}px`;
+		lightning.style.top = `${cloudCenterY}px`; // از زیر ابرها
+		
+		// رعد و برق بیشتر و سریع‌تر
+		lightning.style.animationDelay = `${i * 1.5 + Math.random() * 1.5}s`;
+		
+		document.body.appendChild(lightning);
+	}
+}
+
+// ایجاد انیمیشن‌های برفی - با CSS خالص - در دو لایه مثل بارانی
+function createSnowyAnimations() {
+	// تشخیص اندازه صفحه برای responsive
+	const width = window.innerWidth;
+	let cloudCount, snowflakeCount;
+	
+	if (width <= 768) {
+		// موبایل: 6 ابر
+		cloudCount = 6;
+		snowflakeCount = 18;
+	} else if (width <= 1024) {
+		// تبلت: 12 ابر
+		cloudCount = 12;
+		snowflakeCount = 36;
+	} else {
+		// دسکتاپ: 40 ابر
+		cloudCount = 40;
+		snowflakeCount = 70;
+	}
+	
+	// ایجاد ابرهای ثابت در بالای صفحه بدون حرکت - لایه اول
+	const screenWidth = window.innerWidth;
+	const cloudWidth = 200;
+	const spacing = cloudCount > 1 ? (screenWidth - (cloudWidth * cloudCount)) / (cloudCount - 1) : 0;
+	
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'static-snow-cloud';
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
+		cloud.style.top = '-20px'; // دقیقا زیر navbar
+		
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد ابرهای ثابت - لایه دوم (40 پیکسل پایین‌تر)
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'static-snow-cloud';
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
+		cloud.style.top = '40px'; // 40 پیکسل پایین‌تر از لایه اول
+		
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد دانه‌های برف که دقیقا از زیر ابرها می‌بارند
+	const cloudCenterY = 60 + 50; // وسط ابر (top + نصف ارتفاع ابر)
+	
+	// برای هر ابر، چند دانه برف از زیرش می‌بارد
+	for (let i = 0; i < snowflakeCount; i++) {
+		const flake = document.createElement('div');
+		flake.className = 'animated-snowflake';
+		const span = document.createElement('span');
+		flake.appendChild(span);
+		
+		// پیدا کردن موقعیت یکی از ابرها (cloudCount ابر در 2 لایه)
+		const cloudIndex = Math.floor(i / 2);
+		const xPosition = (cloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
+		
+		// دانه‌های برف از زیر ابرها شروع می‌کنن
+		flake.style.left = `${xPosition + (Math.random() * cloudWidth - cloudWidth/2)}px`;
+		flake.style.top = `${cloudCenterY}px`; // از زیر ابرها
+		
+		// تنوع در سرعت و تاخیر
+		flake.style.animationDelay = `${Math.random() * 4}s`;
+		flake.style.animationDuration = `${6 + Math.random() * 4}s`;
+		const size = 8 + Math.random() * 8;
+		flake.style.width = `${size}px`;
+		flake.style.height = `${size}px`;
+		
+		document.body.appendChild(flake);
+	}
+}
+
+// ایجاد انیمیشن‌های شب - با CSS خالص
+function createNightAnimations() {
+	// ایجاد ماه
+	const moon = document.createElement('div');
+	moon.className = 'animated-moon';
+	document.body.appendChild(moon);
+	
+	// ایجاد 50 ستاره چشمک‌زن
+	for (let i = 0; i < 50; i++) {
+		const star = document.createElement('div');
+		star.className = 'animated-star';
+		star.style.left = `${Math.random() * 100}%`;
+		star.style.top = `${Math.random() * 80}%`;
+		star.style.animationDelay = `${Math.random() * 3}s`;
+		star.style.animationDuration = `${2 + Math.random() * 2}s`;
+		document.body.appendChild(star);
+	}
+	
+	// ایجاد 4 ستاره دنباله‌دار
+	for (let i = 0; i < 4; i++) {
+		const shootingStar = document.createElement('div');
+		shootingStar.className = 'animated-shooting-star';
+		shootingStar.style.left = `${60 + Math.random() * 30}%`;
+		shootingStar.style.top = `${10 + Math.random() * 20}%`;
+		shootingStar.style.animationDelay = `${i * 8 + Math.random() * 4}s`;
+		document.body.appendChild(shootingStar);
+	}
+}
+
+// ایجاد انیمیشن‌های روز - با CSS خالص
+function createDayAnimations() {
+	// ایجاد خورشید
+	const sun = document.createElement('div');
+	sun.className = 'animated-sun';
+	document.body.appendChild(sun);
+	
+	// ایجاد 5-6 ابر بزرگ از نوع cloudy
+	for (let i = 0; i < 6; i++) {
+		const cloud = document.createElement('div');
+		cloud.className = 'animated-dark-cloud';
+		
+		const span = document.createElement('span');
+		const part4 = document.createElement('div');
+		part4.className = 'cloud-part-4';
+		
+		cloud.appendChild(span);
+		cloud.appendChild(part4);
+		
+		cloud.style.top = `${10 + Math.random() * 50}%`;
+		cloud.style.left = `-200px`; // شروع از خارج صفحه سمت چپ
+		cloud.style.animation = `cloudMoveLeftToRight ${25 + Math.random() * 15}s linear infinite`;
+		cloud.style.animationDelay = `${i * 6}s`;
+		document.body.appendChild(cloud);
+	}
+	
+	// ایجاد 4 پرنده
+	for (let i = 0; i < 4; i++) {
+		const bird = document.createElement('div');
+		bird.className = 'animated-bird';
+		bird.style.top = `${10 + Math.random() * 30}%`;
+		bird.style.animationDelay = `${i * 6}s`;
+		document.body.appendChild(bird);
 	}
 }
 
@@ -833,7 +1582,7 @@ async function reverseGeocode(lat, lon) {
 }
 
 async function fetchWeather(lat, lon) {
-	const url = `${OPEN_METEO.forecast}?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,is_day,surface_pressure,visibility,dew_point_2m,uv_index&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,precipitation_probability_max,uv_index_max&timezone=auto&forecast_days=16`;
+	const url = `${OPEN_METEO.forecast}?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,is_day,surface_pressure,visibility,dew_point_2m,uv_index&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,precipitation_probability_max,uv_index_max&timezone=auto&forecast_days=16`;
 	const data = await fetchJson(url);
 	return normalizeWeather(data);
 }
@@ -850,10 +1599,18 @@ async function fetchHistoricalData(lat, lon, period) {
 	const end = new Date();
 	const start = new Date();
 	switch (period) {
-		case 'week': start.setDate(end.getDate() - 7); break;
-		case 'month': start.setMonth(end.getMonth() - 1); break;
-		case '6months': start.setMonth(end.getMonth() - 6); break;
-		case 'year': start.setFullYear(end.getFullYear() - 1); break;
+		case 'week': 
+			start.setDate(end.getDate() - 7); 
+			break;
+		case 'month': 
+			start.setDate(end.getDate() - 30); 
+			break;
+		case '6months': 
+			start.setDate(end.getDate() - 180); 
+			break;
+		case 'year': 
+			start.setDate(end.getDate() - 365); 
+			break;
 	}
 	const startStr = start.toISOString().split('T')[0];
 	const endStr = end.toISOString().split('T')[0];
@@ -861,11 +1618,31 @@ async function fetchHistoricalData(lat, lon, period) {
 	try {
 		const data = await fetchJson(url);
 		return data.daily;
-	} catch { return null; }
+	} catch (e) { 
+		console.error('❌ Error fetching historical data:', e);
+		return null; 
+	}
 }
 
 function normalizeWeather(data) {
 	const tz = data.timezone || 'auto';
+	const utcOffsetSeconds = data.utc_offset_seconds || 0;
+	
+	// Helper function to convert local time string to proper ISO with timezone offset
+	const toISOWithOffset = (localTimeStr) => {
+		if (!localTimeStr) return localTimeStr;
+		// اگر قبلا timezone داره، برنگردون
+		if (localTimeStr.includes('+') || localTimeStr.includes('Z') || localTimeStr.match(/[+-]\d{2}:\d{2}$/)) {
+			return localTimeStr;
+		}
+		// اضافه کردن timezone offset به فرمت ISO
+		const offsetHours = Math.floor(Math.abs(utcOffsetSeconds) / 3600);
+		const offsetMinutes = Math.floor((Math.abs(utcOffsetSeconds) % 3600) / 60);
+		const offsetSign = utcOffsetSeconds >= 0 ? '+' : '-';
+		const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+		return `${localTimeStr}${offsetStr}`;
+	};
+	
 	let current = {};
 	if (data.current) {
 		current = {
@@ -876,6 +1653,7 @@ function normalizeWeather(data) {
 			precipMm: data.current.precipitation ?? 0,
 			code: data.current.weather_code,
 			windMs: data.current.wind_speed_10m,
+			windDirection: data.current.wind_direction_10m,
 			isDay: data.current.is_day,
 			pressure: data.current.surface_pressure,
 			visibility: data.current.visibility,
@@ -894,6 +1672,7 @@ function normalizeWeather(data) {
 				precipMm: data.hourly.precipitation?.[i],
 				code: data.hourly.weather_code?.[i],
 				windMs: data.hourly.wind_speed_10m?.[i],
+				windDirection: data.hourly.wind_direction_10m?.[i],
 				uvIndex: data.hourly.uv_index?.[i],
 			});
 		}
@@ -906,8 +1685,9 @@ function normalizeWeather(data) {
 				code: data.daily.weather_code?.[i],
 				minC: data.daily.temperature_2m_min?.[i],
 				maxC: data.daily.temperature_2m_max?.[i],
-				sunrise: data.daily.sunrise?.[i],
-				sunset: data.daily.sunset?.[i],
+				// اضافه کردن timezone offset به sunrise و sunset
+				sunrise: toISOWithOffset(data.daily.sunrise?.[i]),
+				sunset: toISOWithOffset(data.daily.sunset?.[i]),
 				precipSum: data.daily.precipitation_sum?.[i],
 				precipProbMax: data.daily.precipitation_probability_max?.[i],
 				uvIndexMax: data.daily.uv_index_max?.[i],
@@ -915,6 +1695,118 @@ function normalizeWeather(data) {
 		}
 	}
 	return { timezone: tz, current, hourly, daily };
+}
+
+// Calculate average daily weather condition from hourly data
+// این تابع وضعیت کلی روز را بر اساس میانگین شرایط ساعتی محاسبه می‌کند
+function calculateDailyWeatherCondition(hourlyData, dayData, tz) {
+	if (!hourlyData || hourlyData.length === 0) {
+		// اگر داده ساعتی نداریم، از کد API استفاده می‌کنیم
+		return dayData.code || 2; // default to cloudy
+	}
+
+	// دریافت طلوع و غروب برای فیلتر کردن ساعات روز
+	let sunrise = null, sunset = null;
+	if (dayData?.sunrise && dayData?.sunset) {
+		sunrise = new Date(dayData.sunrise);
+		sunset = new Date(dayData.sunset);
+	}
+
+	// فیلتر کردن فقط ساعات روز
+	const dayTimeHours = hourlyData.filter(h => {
+		const hourDate = new Date(h.time);
+		
+		// اگر طلوع و غروب داریم، دقیق بررسی می‌کنیم
+		if (sunrise && sunset) {
+			return hourDate >= sunrise && hourDate <= sunset;
+		}
+		
+		// در غیر این صورت با ساعت محلی تخمین می‌زنیم (6 صبح تا 6 عصر)
+		const localHour = hourDate.getHours();
+		return localHour >= 6 && localHour < 18;
+	});
+
+	// اگر هیچ ساعت روزی نداریم، از کد API استفاده می‌کنیم
+	if (dayTimeHours.length === 0) {
+		return dayData.code || 2;
+	}
+
+	// تبدیل کدهای آب و هوا به دسته‌بندی ساده
+	const codeToCategory = (code) => {
+		if (code === 0) return 'sunny';
+		if (code === 1) return 'partlyCloudy';
+		if (code >= 2 && code <= 3) return 'cloudy';
+		// برای شرایط دیگر (باران، برف، طوفان و غیره)، کد اصلی را نگه می‌داریم
+		return 'other';
+	};
+
+	// شمارش هر دسته
+	const categoryCounts = {
+		sunny: 0,
+		partlyCloudy: 0,
+		cloudy: 0,
+		other: {}
+	};
+
+	dayTimeHours.forEach(h => {
+		const category = codeToCategory(h.code);
+		if (category === 'other') {
+			// برای شرایط دیگر، کد اصلی را نگه می‌داریم
+			categoryCounts.other[h.code] = (categoryCounts.other[h.code] || 0) + 1;
+		} else {
+			categoryCounts[category]++;
+		}
+	});
+
+	const totalDaytimeHours = dayTimeHours.length;
+
+	// بررسی شرایط دیگر (باران، برف، طوفان و غیره)
+	const otherCodes = Object.keys(categoryCounts.other);
+	if (otherCodes.length > 0) {
+		// اگر شرایط خاصی مانند باران، برف یا طوفان وجود دارد
+		// و بیش از 30% ساعات روز را پوشش می‌دهد، از آن استفاده می‌کنیم
+		for (const code of otherCodes) {
+			const count = categoryCounts.other[code];
+			if (count / totalDaytimeHours > 0.3) {
+				return parseInt(code);
+			}
+		}
+	}
+
+	// محاسبه بر اساس اکثریت و ترکیب شرایط
+	// اگر آفتابی + آفتابی-ابری بیش از 50% باشد، و آفتابی-ابری حداقل 20% باشد، آفتابی-ابری می‌زنیم
+	const sunnyAndPartly = categoryCounts.sunny + categoryCounts.partlyCloudy;
+	const partlyCloudyPercent = categoryCounts.partlyCloudy / totalDaytimeHours;
+	const sunnyPercent = categoryCounts.sunny / totalDaytimeHours;
+	
+	if (sunnyAndPartly / totalDaytimeHours > 0.5 && partlyCloudyPercent >= 0.2) {
+		// اگر ترکیب آفتابی و آفتابی-ابری غالب است و آفتابی-ابری حداقل 20% است، آفتابی-ابری
+		return 1; // partlyCloudy
+	}
+
+	// اگر آفتابی بیش از 70% باشد، آفتابی (فقط وقتی که آفتابی-ابری کم است)
+	if (sunnyPercent > 0.7 && partlyCloudyPercent < 0.2) {
+		return 0; // sunny
+	}
+
+	// اگر ابری بیش از 50% باشد، ابری
+	if (categoryCounts.cloudy / totalDaytimeHours > 0.5) {
+		return 2; // cloudy
+	}
+
+	// در غیر این صورت، بر اساس اکثریت ساده
+	// اگر آفتابی بیشتر است و آفتابی-ابری کمتر از 30% است، آفتابی
+	if (categoryCounts.sunny > categoryCounts.partlyCloudy && categoryCounts.sunny > categoryCounts.cloudy && partlyCloudyPercent < 0.3) {
+		return 0; // sunny
+	}
+	
+	// اگر آفتابی-ابری بیشتر است یا آفتابی و آفتابی-ابری ترکیب شده‌اند، آفتابی-ابری
+	if (categoryCounts.partlyCloudy >= categoryCounts.sunny || (categoryCounts.sunny > 0 && categoryCounts.partlyCloudy > 0 && partlyCloudyPercent >= 0.2)) {
+		return 1; // partlyCloudy
+	}
+
+	// به صورت پیش‌فرض، ابری
+	return 2; // cloudy
 }
 
 // Render for selected day
@@ -938,12 +1830,49 @@ function renderSelectedDay() {
 	
 	// Get hourly data for that day
 	const dayStr = dayData.time.split('T')[0];
-	const hourlyForDay = state.weather.hourly.filter(h => h.time.startsWith(dayStr));
+	const allHourlyForDay = state.weather.hourly.filter(h => h.time.startsWith(dayStr));
+	
+	// برای محاسبه وضعیت کلی روز، از همه ساعات روز استفاده می‌کنیم (شامل ساعت‌های گذشته)
+	const calculatedDailyCode = calculateDailyWeatherCondition(allHourlyForDay, dayData, tz);
+	
+	// برای نمایش، فقط ساعات آینده را فیلتر می‌کنیم
+	let hourlyForDay = allHourlyForDay;
+	if (state.selectedDayIndex === 0) {
+		const now = new Date();
+		// گرد کردن ساعت فعلی به پایین (برای اینکه ساعت فعلی را هم شامل کنیم)
+		const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
+		hourlyForDay = allHourlyForDay.filter(h => {
+			const hourTime = new Date(h.time);
+			// گرد کردن ساعت داده به پایین برای مقایسه دقیق
+			const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
+			return hourTimeFloored >= currentHour;
+		});
+		
+		// اگر ساعات امروز کافی نیست، ساعات فردا را هم اضافه کن تا 24 ساعت کامل شود
+		if (hourlyForDay.length < 24 && state.weather.daily.length > 1) {
+			const tomorrowData = state.weather.daily[1];
+			const tomorrowStr = tomorrowData.time.split('T')[0];
+			const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
+			const tomorrowHours = state.weather.hourly.filter(h => {
+				const hourTime = new Date(h.time);
+				const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
+				return h.time.startsWith(tomorrowStr) && hourTimeFloored >= currentHour;
+			});
+			
+			// اضافه کردن ساعات فردا تا رسیدن به 24 ساعت
+			hourlyForDay = [...hourlyForDay, ...tomorrowHours].slice(0, 24);
+		} else {
+			// محدود کردن به 24 ساعت آینده
+			hourlyForDay = hourlyForDay.slice(0, 24);
+		}
+	}
 	
 	// If today, use current weather; otherwise use first hour of the day or average
 	let displayData;
-	if (state.selectedDayIndex === 0 && state.weather.current) {
+		if (state.selectedDayIndex === 0 && state.weather.current) {
 		displayData = state.weather.current;
+		// برای امروز، از کد محاسبه‌شده استفاده می‌کنیم (به جای کد API)
+		displayData.code = calculatedDailyCode;
 	} else if (hourlyForDay.length > 0) {
 		const midDay = hourlyForDay[Math.floor(hourlyForDay.length / 2)];
 		displayData = {
@@ -952,8 +1881,9 @@ function renderSelectedDay() {
 			apparentC: midDay.tempC,
 			humidity: midDay.humidity,
 			precipMm: dayData.precipSum,
-			code: dayData.code,
+			code: calculatedDailyCode, // استفاده از کد محاسبه‌شده به جای dayData.code
 			windMs: midDay.windMs,
+			windDirection: midDay.windDirection,
 			isDay: 1,
 			pressure: null,
 			visibility: null,
@@ -967,8 +1897,9 @@ function renderSelectedDay() {
 			apparentC: null,
 			humidity: null,
 			precipMm: dayData.precipSum,
-			code: dayData.code,
+			code: calculatedDailyCode, // استفاده از کد محاسبه‌شده به جای dayData.code
 			windMs: null,
+			windDirection: null,
 			isDay: 1,
 			pressure: null,
 			visibility: null,
@@ -992,24 +1923,93 @@ function renderSelectedDay() {
 	el.placeName.textContent = nameParts.join('، ');
 	el.updatedAt.textContent = `${fmtDateLong(dayData.time, tz)}`;
 	
-	renderIcon(el.icon, info.key);
+	// اگر شب است، ماه را نشان بده، در غیر این صورت آیکون آب و هوا
+	if (displayData.isDay === 0) {
+		// شب است - نمایش ماه
+		el.icon.innerHTML = '';
+		el.icon.className = 'wx-icon moon-icon';
+		const moonEmoji = document.createElement('div');
+		moonEmoji.style.fontSize = '120px';
+		moonEmoji.style.textAlign = 'center';
+		moonEmoji.textContent = '🌙';
+		el.icon.appendChild(moonEmoji);
+		// تغییر متن به "مهتابی" برای شب
+		el.condition.textContent = t('moonlit');
+	} else {
+		// روز است - نمایش آیکون آب و هوا
+		renderIcon(el.icon, info.key);
+		el.condition.textContent = info.label;
+	}
 	el.temp.textContent = fmtTemp(displayData.tempC);
-	el.condition.textContent = info.label;
+	
+	// نمایش بیشترین و کمترین دما
+	if (dayData.maxC != null && dayData.minC != null) {
+		const maxTemp = fmtTemp(dayData.maxC);
+		const minTemp = fmtTemp(dayData.minC);
+		el.tempRange.innerHTML = `<span class="temp-max">${maxTemp}</span> / <span class="temp-min">${minTemp}</span>`;
+	} else {
+		el.tempRange.textContent = '';
+	}
 	// Update stat cards with animations
+	// Feels Like - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (displayData.apparentC != null) {
 	updateStatCard('feelsLike', fmtTemp(displayData.apparentC), 'feelsLikeBar', normalizeTemp(displayData.apparentC));
-	updateStatCard('humidity', fmtPercent(displayData.humidity), 'humidityBar', displayData.humidity || 0);
+	} else {
+		updateStatCard('feelsLike', '—', 'feelsLikeBar', 0);
+	}
 	
-	const windKmh = displayData.windMs == null ? 0 : msToKmh(displayData.windMs);
-	updateStatCard('wind', displayData.windMs == null ? '—' : `${formatNumber(windKmh)} km/h`, 'windBar', Math.min(windKmh / 100 * 100, 100));
+	// Humidity - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (displayData.humidity != null) {
+		updateStatCard('humidity', fmtPercent(displayData.humidity), 'humidityBar', displayData.humidity);
+	} else {
+		updateStatCard('humidity', '—', 'humidityBar', 0);
+	}
 	
+	// Wind - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (displayData.windMs != null) {
+		const windKmh = msToKmh(displayData.windMs);
+		const windDir = getWindDirection(displayData.windDirection);
+		let windText = `${formatNumber(windKmh)} km/h`;
+		if (windDir) {
+			windText += ` ${windDir.name} ${formatNumber(windDir.deg)}°`;
+		}
+		updateStatCard('wind', windText, 'windBar', Math.min(windKmh / 100 * 100, 100));
+	} else {
+		updateStatCard('wind', '—', 'windBar', 0);
+	}
+	
+	// Pressure - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (displayData.pressure != null) {
 	updateStatCard('pressure', fmthPa(displayData.pressure), 'pressureBar', normalizePressure(displayData.pressure));
+	} else {
+		updateStatCard('pressure', '—', 'pressureBar', 0);
+	}
+	
+	// Visibility - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (displayData.visibility != null) {
 	updateStatCard('visibility', fmtKm(displayData.visibility), 'visibilityBar', normalizeVisibility(displayData.visibility));
-	updateStatCard('dewpoint', fmtTemp(displayData.dewpoint));
+	} else {
+		updateStatCard('visibility', '—', 'visibilityBar', 0);
+	}
 	
-	const precipProb = dayData.precipProbMax != null ? dayData.precipProbMax : 0;
-	updateStatCard('precip', dayData.precipProbMax != null ? `${fmtPercent(dayData.precipProbMax)} ${t('chance')}` : fmtMm(displayData.precipMm), 'precipBar', precipProb);
+	// Dewpoint - نمایش کارت حتی اگر داده نیست
+	updateStatCard('dewpoint', displayData.dewpoint != null ? fmtTemp(displayData.dewpoint) : '—');
 	
-	updateStatCard('uvIndex', getUVLabel(displayData.uvIndex), 'uvBar', Math.min((displayData.uvIndex || 0) / 11 * 100, 100));
+	// Precipitation - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (dayData.precipProbMax != null) {
+		updateStatCard('precip', `${fmtPercent(dayData.precipProbMax)} ${t('chance')}`, 'precipBar', dayData.precipProbMax);
+	} else if (displayData.precipMm != null) {
+		updateStatCard('precip', fmtMm(displayData.precipMm), 'precipBar', 0);
+	} else {
+		updateStatCard('precip', '—', 'precipBar', 0);
+	}
+	
+	// UV Index - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
+	if (displayData.uvIndex != null && displayData.uvIndex > 0) {
+		updateStatCard('uvIndex', getUVLabel(displayData.uvIndex), 'uvBar', Math.min(displayData.uvIndex / 11 * 100, 100));
+	} else {
+		updateStatCard('uvIndex', '—', 'uvBar', 0);
+	}
 	
 	const aqiValue = state.selectedDayIndex === 0 && state.airQuality != null ? state.airQuality : 0;
 	updateStatCard('aqi', state.selectedDayIndex === 0 && state.airQuality != null ? getAQILabel(state.airQuality) : '—', 'aqiBar', Math.min(aqiValue / 300 * 100, 100));
@@ -1033,12 +2033,85 @@ function renderHourlyForDay(hourlyData, tz) {
 		el.hourlyList.innerHTML = `<div style="color: var(--muted); padding: 20px; text-align: center;">${t('noHourlyData')}</div>`;
 		return;
 	}
-	hourlyData.forEach(h => {
+	
+	// اگر امروز است، فقط ساعات آینده را نمایش بده (نه ساعت‌های گذشته)
+	let filteredHourlyData = hourlyData;
+	if (state.selectedDayIndex === 0) {
+		const now = new Date();
+		// گرد کردن ساعت فعلی به پایین (برای اینکه ساعت فعلی را هم شامل کنیم)
+		const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
+		filteredHourlyData = hourlyData.filter(h => {
+			const hourTime = new Date(h.time);
+			// گرد کردن ساعت داده به پایین برای مقایسه دقیق
+			const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
+			return hourTimeFloored >= currentHour;
+		});
+		
+		// اگر ساعات امروز کافی نیست، ساعات فردا را هم اضافه کن تا 24 ساعت کامل شود
+		if (filteredHourlyData.length < 24 && state.weather.daily.length > 1) {
+			const tomorrowData = state.weather.daily[1];
+			const tomorrowStr = tomorrowData.time.split('T')[0];
+			const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
+			const tomorrowHours = state.weather.hourly.filter(h => {
+				const hourTime = new Date(h.time);
+				const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
+				return h.time.startsWith(tomorrowStr) && hourTimeFloored >= currentHour;
+			});
+			
+			// اضافه کردن ساعات فردا تا رسیدن به 24 ساعت
+			filteredHourlyData = [...filteredHourlyData, ...tomorrowHours].slice(0, 24);
+		} else {
+			// محدود کردن به 24 ساعت آینده
+			filteredHourlyData = filteredHourlyData.slice(0, 24);
+		}
+		
+		// اگر بعد از فیلتر هیچ داده‌ای باقی نماند، پیام نمایش بده
+		if (filteredHourlyData.length === 0) {
+			el.hourlyList.innerHTML = `<div style="color: var(--muted); padding: 20px; text-align: center;">${t('noHourlyData')}</div>`;
+			return;
+		}
+	}
+	
+	// دریافت طلوع و غروب برای بررسی دقیق شب/روز
+	const dayData = state.weather?.daily?.[state.selectedDayIndex];
+	let sunrise = null, sunset = null;
+	if (dayData?.sunrise && dayData?.sunset) {
+		sunrise = new Date(dayData.sunrise);
+		sunset = new Date(dayData.sunset);
+	}
+	
+	filteredHourlyData.forEach(h => {
 		const item = document.createElement('div');
 		item.className = 'hour';
 		const icon = document.createElement('div');
-		const info = weatherCodeToInfo(h.code, 1);
-		renderIcon(icon, info.key, 'small');
+		
+		// بررسی دقیق اینکه شب است یا روز
+		const hourDate = new Date(h.time);
+		let isNight = false;
+		
+		if (sunrise && sunset) {
+			// اگر اطلاعات طلوع و غروب داریم، دقیق بررسی می‌کنیم
+			isNight = hourDate < sunrise || hourDate > sunset;
+		} else {
+			// در غیر این صورت با ساعت محلی تخمین می‌زنیم
+			const localHour = tzDate(h.time, tz).getHours();
+			isNight = localHour < 6 || localHour >= 18;
+		}
+		
+		if (isNight) {
+			// شب - نمایش ماه
+			icon.className = 'wx-icon small';
+			icon.innerHTML = '';
+			const moonEmoji = document.createElement('div');
+			moonEmoji.style.fontSize = '32px';
+			moonEmoji.style.textAlign = 'center';
+			moonEmoji.textContent = '🌙';
+			icon.appendChild(moonEmoji);
+		} else {
+			// روز - نمایش آیکون آب و هوا
+			const info = weatherCodeToInfo(h.code, 1);
+			renderIcon(icon, info.key, 'small');
+		}
 		
 		const timeDiv = document.createElement('div');
 		timeDiv.className = 'time';
@@ -1072,13 +2145,42 @@ function renderDaily() {
 			card.style.borderColor = 'rgba(124,211,255,0.5)';
 		}
 		card.style.cursor = 'pointer';
-		card.addEventListener('click', (e) => {
-			e.preventDefault();
+	
+	// تشخیص scroll از click
+	let startY = 0;
+	let startTime = 0;
+	
+	card.addEventListener('touchstart', (e) => {
+		startY = e.touches[0].clientY;
+		startTime = Date.now();
+	}, { passive: true });
+	
+	card.addEventListener('touchend', (e) => {
+		const endY = e.changedTouches[0].clientY;
+		const endTime = Date.now();
+		const distance = Math.abs(endY - startY);
+		const duration = endTime - startTime;
+		
+		// اگر حرکت کمتر از 10 پیکسل و زمان کمتر از 500ms بود، کلیک محسوب می‌شود
+		if (distance < 10 && duration < 500) {
 			changeSelectedDay(idx);
+		}
+	}, { passive: true });
+	
+		card.addEventListener('click', (e) => {
+		// برای دسکتاپ (ماوس)
+		if (!e.touches) {
+			changeSelectedDay(idx);
+		}
 		});
 		
+		// محاسبه وضعیت کلی روز بر اساس میانگین شرایط ساعتی
+		const dayStr = d.time.split('T')[0];
+		const hourlyForDay = state.weather.hourly.filter(h => h.time.startsWith(dayStr));
+		const calculatedCode = calculateDailyWeatherCondition(hourlyForDay, d, tz);
+		
 		const icon = document.createElement('div');
-		const info = weatherCodeToInfo(d.code, 1);
+		const info = weatherCodeToInfo(calculatedCode, 1);
 		renderIcon(icon, info.key, 'small');
 		
 		const nameEl = document.createElement('div'); 
@@ -1208,8 +2310,10 @@ function renderSunMoonTracks(dayData, tz, date) {
 	
 	const sunMarker = document.getElementById('sunPositionMarker');
 	if (sunMarker) {
-		// اگر امروز نیست، خورشید را مخفی کن
-		if (!isToday) {
+		// خورشید را نمایش بده اگر امروز باشد و خورشید در آسمان باشد
+		const isSunVisible = isToday && now >= sr && now <= ss;
+		
+		if (!isSunVisible) {
 			sunMarker.style.display = 'none';
 		} else {
 			sunMarker.style.display = 'block';
@@ -1262,27 +2366,14 @@ function renderSunMoonTracks(dayData, tz, date) {
 				if (timeLeftText) {
 					timeLeftText.setAttribute('x', boxX + 50);
 					timeLeftText.setAttribute('y', boxY + 32);
-					if (now >= sr && now <= ss) {
-						const remaining = Math.floor((ss - now) / 60000);
-						const hoursLeft = Math.floor(remaining / 60);
-						const minsLeft = remaining % 60;
-						const hourUnit = currentLang === 'fa' ? 'س' : 'h';
-						const minUnit = currentLang === 'fa' ? 'د' : 'm';
-						const andWord = currentLang === 'fa' ? ' و ' : ' ';
-						const untilSet = currentLang === 'fa' ? 'تا غروب' : t('untilSet');
-						timeLeftText.textContent = `${hoursLeft > 0 ? formatNumber(hoursLeft) + hourUnit : ''}${hoursLeft > 0 ? andWord : ''}${formatNumber(minsLeft)}${minUnit} ${untilSet}`;
-					} else if (now < sr) {
-						const minutesUntil = Math.floor((sr - now) / 60000);
-						const hoursUntil = Math.floor(minutesUntil / 60);
-						const minsRemaining = minutesUntil % 60;
-						const hourUnit = currentLang === 'fa' ? 'س' : 'h';
-						const minUnit = currentLang === 'fa' ? 'د' : 'm';
-						const andWord = currentLang === 'fa' ? ' و ' : ' ';
-						const untilRise = currentLang === 'fa' ? 'تا طلوع' : t('untilRise');
-						timeLeftText.textContent = `${hoursUntil > 0 ? formatNumber(hoursUntil) + hourUnit : ''}${hoursUntil > 0 ? andWord : ''}${formatNumber(minsRemaining)}${minUnit} ${untilRise}`;
-					} else {
-						timeLeftText.textContent = t('sunSet');
-					}
+					const remaining = Math.floor((ss - now) / 60000);
+					const hoursLeft = Math.floor(remaining / 60);
+					const minsLeft = remaining % 60;
+					const hourUnit = currentLang === 'fa' ? 'س' : 'h';
+					const minUnit = currentLang === 'fa' ? 'د' : 'm';
+					const andWord = currentLang === 'fa' ? ' و ' : ' ';
+					const untilSet = currentLang === 'fa' ? 'تا غروب' : t('untilSet');
+					timeLeftText.textContent = `${hoursLeft > 0 ? formatNumber(hoursLeft) + hourUnit : ''}${hoursLeft > 0 ? andWord : ''}${formatNumber(minsLeft)}${minUnit} ${untilSet}`;
 				}
 				
 				if (altText && state.place) {
@@ -1293,8 +2384,8 @@ function renderSunMoonTracks(dayData, tz, date) {
 				}
 			}
 			
-			// نمایش/مخفی کردن بر اساس وضعیت
-			sunMarker.style.opacity = (now < sr || now > ss) ? '0.3' : '1';
+			// نمایش با opacity کامل چون خورشید در آسمان است
+			sunMarker.style.opacity = '1';
 			
 			// افزودن event listener برای نمایش باکس اطلاعات با کلیک و hover (فقط یک بار)
 			if (!sunMarker.dataset.listenersAdded) {
@@ -1343,8 +2434,8 @@ function renderSunMoonTracks(dayData, tz, date) {
 	
 	el.sunStatus.textContent = sunStatusText;
 	
-	// Moon
-	const moonTimes = getMoonRiseSet(date, state.place.lat, state.place.lon, dayData.sunrise, dayData.sunset);
+	// Moon - محاسبه دقیق طلوع و غروب
+	const moonTimes = getMoonRiseSet(date, state.place.lat, state.place.lon);
 	
 	// نمایش ساعت طلوع و غروب زیر ایموجی‌های ماه
 	const moonRiseLabel = document.getElementById('moonRiseTimeLabel');
@@ -1393,8 +2484,10 @@ function renderSunMoonTracks(dayData, tz, date) {
 	
 	const moonMarker = document.getElementById('moonPositionMarker');
 	if (moonMarker) {
-		// اگر امروز نیست، ماه را مخفی کن
-		if (!isToday) {
+		// ماه را نمایش بده اگر امروز باشد و ماه در آسمان باشد
+		const isMoonVisible = isToday && now >= mr && now <= ms;
+		
+		if (!isMoonVisible) {
 			moonMarker.style.display = 'none';
 		} else {
 			moonMarker.style.display = 'block';
@@ -1447,27 +2540,14 @@ function renderSunMoonTracks(dayData, tz, date) {
 				if (timeLeftText) {
 					timeLeftText.setAttribute('x', boxX + 50);
 					timeLeftText.setAttribute('y', boxY + 32);
-					if (now >= mr && now <= ms) {
-						const remaining = Math.floor((ms - now) / 60000);
-						const hoursLeft = Math.floor(remaining / 60);
-						const minsLeft = remaining % 60;
-						const hourUnit = currentLang === 'fa' ? 'س' : 'h';
-						const minUnit = currentLang === 'fa' ? 'د' : 'm';
-						const andWord = currentLang === 'fa' ? ' و ' : ' ';
-						const untilSet = currentLang === 'fa' ? 'تا غروب' : t('untilSet');
-						timeLeftText.textContent = `${hoursLeft > 0 ? formatNumber(hoursLeft) + hourUnit : ''}${hoursLeft > 0 ? andWord : ''}${formatNumber(minsLeft)}${minUnit} ${untilSet}`;
-					} else if (now < mr) {
-						const minutesUntil = Math.floor((mr - now) / 60000);
-						const hoursUntil = Math.floor(minutesUntil / 60);
-						const minsRemaining = minutesUntil % 60;
-						const hourUnit = currentLang === 'fa' ? 'س' : 'h';
-						const minUnit = currentLang === 'fa' ? 'د' : 'm';
-						const andWord = currentLang === 'fa' ? ' و ' : ' ';
-						const untilRise = currentLang === 'fa' ? 'تا طلوع' : t('untilRise');
-						timeLeftText.textContent = `${hoursUntil > 0 ? formatNumber(hoursUntil) + hourUnit : ''}${hoursUntil > 0 ? andWord : ''}${formatNumber(minsRemaining)}${minUnit} ${untilRise}`;
-					} else {
-						timeLeftText.textContent = t('sunSet');
-					}
+					const remaining = Math.floor((ms - now) / 60000);
+					const hoursLeft = Math.floor(remaining / 60);
+					const minsLeft = remaining % 60;
+					const hourUnit = currentLang === 'fa' ? 'س' : 'h';
+					const minUnit = currentLang === 'fa' ? 'د' : 'm';
+					const andWord = currentLang === 'fa' ? ' و ' : ' ';
+					const untilSet = currentLang === 'fa' ? 'تا غروب' : t('untilSet');
+					timeLeftText.textContent = `${hoursLeft > 0 ? formatNumber(hoursLeft) + hourUnit : ''}${hoursLeft > 0 ? andWord : ''}${formatNumber(minsLeft)}${minUnit} ${untilSet}`;
 				}
 				
 				if (phaseText) {
@@ -1478,8 +2558,8 @@ function renderSunMoonTracks(dayData, tz, date) {
 				}
 			}
 			
-			// نمایش/مخفی کردن بر اساس وضعیت
-			moonMarker.style.opacity = (now < mr || now > ms) ? '0.3' : '1';
+			// نمایش با opacity کامل چون ماه در آسمان است
+			moonMarker.style.opacity = '1';
 			
 			// افزودن event listener برای نمایش باکس اطلاعات با کلیک و hover (فقط یک بار)
 			if (!moonMarker.dataset.listenersAdded) {
@@ -1515,8 +2595,7 @@ function renderSunMoonTracks(dayData, tz, date) {
 	
 	// محاسبه و نمایش altitude/azimuth ماه
 	if (state.place && isToday) {
-		const moonPhaseData = getMoonPhase(date);
-		const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon, moonPhaseData.phase);
+		const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon);
 		const altStr = `${t('altitude')}: ${formatNumber(Math.round(moonAlt.altitude))}°`;
 		const azStr = `${t('azimuth')}: ${formatNumber(Math.round(moonAlt.azimuth))}°`;
 		moonStatusText += `\n${altStr} | ${azStr}`;
@@ -1645,7 +2724,7 @@ function updateMoonDetails(moonData, moonTimes, mr, ms, date, isToday, now, tz) 
 	// 7. زاویه ماه (Altitude)
 	const altitudeDetail = document.getElementById('moonAltitudeDetail');
 	if (altitudeDetail && state.place && isToday) {
-		const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon, moonData.phase);
+		const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon);
 		altitudeDetail.textContent = `${formatNumber(Math.round(Math.max(0, moonAlt.altitude)))}°`;
 	} else if (altitudeDetail) {
 		altitudeDetail.textContent = '—';
@@ -1872,8 +2951,23 @@ function renderSolarSystem(moonPhase) {
 // Historical charts
 async function loadHistoricalData(period = 'week') {
 	if (!state.place) return;
+	
+	console.log(`📊 Loading historical data for period: ${period}`);
+	
 	const data = await fetchHistoricalData(state.place.lat, state.place.lon, period);
-	if (!data) return;
+	
+	if (!data) {
+		console.warn('⚠️ No historical data received');
+		showToast(t('noHistoricalData') || 'داده‌های تاریخی در دسترس نیست');
+		// نمایش پیغام خالی در نمودارها
+		state.historyData = null;
+		renderPrecipChart(null);
+		renderTempChart(null);
+		renderHistoryStats(null);
+		return;
+	}
+	
+	console.log('✅ Historical data loaded successfully:', data.time?.length, 'days');
 	state.historyData = data;
 	renderPrecipChart(data);
 	renderTempChart(data);
@@ -1883,6 +2977,31 @@ async function loadHistoricalData(period = 'week') {
 function renderPrecipChart(data) {
 	const ctx = el.precipChart.getContext('2d');
 	if (precipChartInstance) precipChartInstance.destroy();
+	
+	const chartContainer = el.precipChart.parentElement;
+	
+	// بررسی اینکه data معتبر هست
+	if (!data || !data.time || !data.time.length) {
+		console.warn('⚠️ No data available for precipitation chart');
+		el.precipChart.style.display = 'none';
+		
+		// نمایش پیغام در container
+		let noDataMsg = chartContainer.querySelector('.no-data-message');
+		if (!noDataMsg) {
+			noDataMsg = document.createElement('div');
+			noDataMsg.className = 'no-data-message';
+			noDataMsg.style.cssText = 'text-align: center; padding: 40px 20px; color: var(--muted); font-size: 14px;';
+			chartContainer.appendChild(noDataMsg);
+		}
+		noDataMsg.textContent = t('noHistoricalData') || 'داده‌های تاریخی در دسترس نیست';
+		return;
+	}
+	
+	// حذف پیغام no-data اگر وجود داشته باشد
+	const noDataMsg = chartContainer.querySelector('.no-data-message');
+	if (noDataMsg) noDataMsg.remove();
+	
+	el.precipChart.style.display = 'block';
 	
 	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
 	const labels = data.time.map(t => {
@@ -1896,7 +3015,7 @@ function renderPrecipChart(data) {
 			labels,
 			datasets: [{
 				label: t('precipitation') + ' (mm)',
-				data: data.precipitation_sum,
+				data: data.precipitation_sum || [],
 				backgroundColor: 'rgba(124, 211, 255, 0.5)',
 				borderColor: 'rgba(124, 211, 255, 1)',
 				borderWidth: 1,
@@ -1926,6 +3045,31 @@ function renderTempChart(data) {
 	const ctx = el.tempChart.getContext('2d');
 	if (tempChartInstance) tempChartInstance.destroy();
 	
+	const chartContainer = el.tempChart.parentElement;
+	
+	// بررسی اینکه data معتبر هست
+	if (!data || !data.time || !data.time.length) {
+		console.warn('⚠️ No data available for temperature chart');
+		el.tempChart.style.display = 'none';
+		
+		// نمایش پیغام در container
+		let noDataMsg = chartContainer.querySelector('.no-data-message');
+		if (!noDataMsg) {
+			noDataMsg = document.createElement('div');
+			noDataMsg.className = 'no-data-message';
+			noDataMsg.style.cssText = 'text-align: center; padding: 40px 20px; color: var(--muted); font-size: 14px;';
+			chartContainer.appendChild(noDataMsg);
+		}
+		noDataMsg.textContent = t('noHistoricalData') || 'داده‌های تاریخی در دسترس نیست';
+		return;
+	}
+	
+	// حذف پیغام no-data اگر وجود داشته باشد
+	const noDataMsg = chartContainer.querySelector('.no-data-message');
+	if (noDataMsg) noDataMsg.remove();
+	
+	el.tempChart.style.display = 'block';
+	
 	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
 	const labels = data.time.map(t => {
 		const d = new Date(t);
@@ -1939,14 +3083,14 @@ function renderTempChart(data) {
 			datasets: [
 				{
 					label: currentLang === 'fa' ? 'حداکثر دما' : 'Max Temperature',
-					data: data.temperature_2m_max,
+					data: data.temperature_2m_max || [],
 					borderColor: 'rgba(255, 107, 107, 1)',
 					backgroundColor: 'rgba(255, 107, 107, 0.1)',
 					tension: 0.3,
 				},
 				{
 					label: currentLang === 'fa' ? 'حداقل دما' : 'Min Temperature',
-					data: data.temperature_2m_min,
+					data: data.temperature_2m_min || [],
 					borderColor: 'rgba(78, 205, 196, 1)',
 					backgroundColor: 'rgba(78, 205, 196, 0.1)',
 					tension: 0.3,
@@ -1974,6 +3118,17 @@ function renderTempChart(data) {
 }
 
 function renderHistoryStats(data) {
+	// بررسی اینکه data معتبر هست
+	if (!data || !data.precipitation_sum || !data.temperature_2m_max || !data.temperature_2m_min) {
+		console.warn('⚠️ No data available for history stats');
+		el.historyStats.innerHTML = `
+			<div style="text-align: center; color: var(--muted); padding: 20px;">
+				${t('noData') || 'داده‌ای موجود نیست'}
+			</div>
+		`;
+		return;
+	}
+	
 	const totalPrecip = data.precipitation_sum.reduce((a, b) => a + (b || 0), 0);
 	const avgMax = data.temperature_2m_max.reduce((a, b) => a + b, 0) / data.temperature_2m_max.length;
 	const avgMin = data.temperature_2m_min.reduce((a, b) => a + b, 0) / data.temperature_2m_min.length;
@@ -2247,7 +3402,6 @@ el.useLocation.addEventListener('click', async () => {
 el.addCity.addEventListener('click', addCurrentCity);
 
 el.prevDay.addEventListener('click', (e) => {
-	e.preventDefault();
 	if (state.selectedDayIndex > 0) {
 		state.selectedDayIndex--;
 		renderSelectedDay();
@@ -2255,7 +3409,6 @@ el.prevDay.addEventListener('click', (e) => {
 });
 
 el.nextDay.addEventListener('click', (e) => {
-	e.preventDefault();
 	const maxDays = state.weather?.daily?.length || 7;
 	if (state.selectedDayIndex < maxDays - 1) {
 		state.selectedDayIndex++;
@@ -2516,12 +3669,79 @@ document.addEventListener('click', () => {
 	if (moonMarker) moonMarker.dataset.clicked = '';
 });
 
+// بهبود اسکرول برای بخش‌های افقی
+function improveScrollBehavior() {
+	// برای تمام المنت‌هایی که اسکرول افقی دارند
+	const scrollContainers = document.querySelectorAll('.city-tabs, .scroller, .days');
+	
+	scrollContainers.forEach(container => {
+		container.addEventListener('wheel', (e) => {
+			// اگر اسکرول افقی نداره، اجازه بده صفحه اصلی اسکرول بشه
+			const hasHorizontalScroll = container.scrollWidth > container.clientWidth;
+			
+			if (!hasHorizontalScroll) {
+				// هیچ اسکرول افقی نیست، اجازه بده عمودی کار کنه
+				return;
+			}
+			
+			// اگر اسکرول افقی داره و کاربر داره افقی اسکرول می‌کنه
+			if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+				e.stopPropagation();
+			}
+			// اگر داره عمودی اسکرول می‌کنه، اجازه بده به parent برسه
+		}, { passive: true });
+	});
+	
+	// ثابت کردن اجزای current card هنگام اسکرول
+	const currentCard = document.querySelector('.current-card');
+	if (currentCard) {
+		// لیست المنت‌هایی که باید ثابت بمانند
+		const fixedElements = currentCard.querySelectorAll(
+			'.temp-large, .condition, .local-time, .current-header h2, ' +
+			'.stat-card, .stat-icon, .stat-content, .stat-label, .stat-value, ' +
+			'.current-body > *:not(.wx-icon), .stats-grid'
+		);
+		
+		// تابعی که تمام transformها را reset می‌کند
+		const resetTransforms = () => {
+			fixedElements.forEach(el => {
+				// بجز wx-icon و اجزای انیمیشن
+				if (!el.classList.contains('wx-icon') && 
+					!el.closest('.wx-icon') &&
+					!el.classList.contains('drop') &&
+					!el.classList.contains('flake') &&
+					!el.classList.contains('cloud') &&
+					!el.classList.contains('sun')) {
+					el.style.transform = 'none';
+					el.style.webkitTransform = 'none';
+				}
+			});
+		};
+		
+		// Reset در هر اسکرول
+		let scrollTimeout;
+		window.addEventListener('scroll', () => {
+			resetTransforms();
+			
+			// یک بار دیگر بعد از توقف اسکرول
+			clearTimeout(scrollTimeout);
+			scrollTimeout = setTimeout(resetTransforms, 50);
+		}, { passive: true });
+		
+		// Reset اولیه
+		resetTransforms();
+	}
+}
+
 // Init
 (async function init() {
 	console.log('🚀 Initializing app...');
 	
 	applyUnitButtons();
 	renderCityTabs();
+	
+	// بهبود رفتار اسکرول
+	setTimeout(() => improveScrollBehavior(), 1000);
 	
 	// تنظیم اولیه نوار ساعت
 	const now = new Date();
