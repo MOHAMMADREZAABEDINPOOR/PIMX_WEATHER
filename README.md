@@ -2,7 +2,7 @@
 
 A comprehensive, feature-rich weather application with real-time forecasts, advanced astronomical visualizations, historical data analytics, and a beautiful responsive UI. Built with pure JavaScript and modern web technologies.
 
-**Live Demo**: [pimx.pages.dev](https://pimx.pages.dev)
+**Live Demo**: [pimx.pages.dev](https://pimx-weather.pages.dev)
 
 ---
 
