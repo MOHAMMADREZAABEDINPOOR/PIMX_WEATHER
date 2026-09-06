@@ -7,10 +7,13 @@
   <meta name="description" content="پیش‌بینی دقیق و لحظه‌ای وضعیت هوا با جستجوی شهر و تشخیص خودکار موقعیت.">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="animations.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="redesign.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;800&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body class="theme-default">
   <!-- Loading Screen -->
@@ -53,7 +56,7 @@
     </div>
     <div class="controls">
       <div class="search">
-        <input id="searchInput" type="text" placeholder="شهر را جستجو کنید..." data-i18n="searchPlaceholder" autocomplete="off" aria-label="جستجوی شهر">
+        <input id="searchInput" type="text" placeholder="شهر را جستجو کنید..." data-i18n="searchPlaceholder" autocomplete="off" aria-label="جستجوی شهر" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions" aria-haspopup="listbox">
         <button id="useLocation" class="button secondary" title="استفاده از موقعیت من"><span data-i18n="useLocation">📍 موقعیت من</span></button>
         <div id="suggestions" class="suggestions" role="listbox" aria-label="نتایج جستجو"></div>
       </div>
@@ -65,11 +68,30 @@
         <button id="unitC" class="unit active" data-unit="C" aria-pressed="true" title="سانتی‌گراد">°C</button>
         <button id="unitF" class="unit" data-unit="F" aria-pressed="false" title="فارنهایت">°F</button>
       </div>
+      <div class="model-select">
+        <label class="sr-only" for="modelSelect" data-i18n="forecastModel">مدل پیش‌بینی</label>
+        <select id="modelSelect" class="select" aria-label="Forecast model">
+          <option value="best_match" data-i18n="modelBest">Best match</option>
+          <option value="ecmwf_ifs04" data-i18n="modelECMWF">ECMWF</option>
+          <option value="gfs_global" data-i18n="modelGFS">GFS</option>
+          <option value="icon_global" data-i18n="modelICON">ICON</option>
+        </select>
+      </div>
     </div>
+    <nav class="section-nav" aria-label="Sections">
+      <a class="section-link active" href="#cities" data-i18n="navCities">شهرها</a>
+      <a class="section-link" href="#current" data-i18n="navNow">اکنون</a>
+      <a class="section-link" href="#hourly" data-i18n="navHourly">ساعتی</a>
+      <a class="section-link" href="#daily" data-i18n="navDaily">روزانه</a>
+      <a class="section-link" href="#map" data-i18n="navMap">نقشه</a>
+      <a class="section-link" href="#history" data-i18n="navHistory">تاریخچه</a>
+      <a class="section-link" href="#astronomy" data-i18n="navAstronomy">نجوم</a>
+      <a class="section-link" href="#solarSystemSection" data-i18n="navSolarSystem">منظومه</a>
+    </nav>
   </header>
 
   <main class="app-main">
-    <section class="card city-card">
+    <section id="cities" class="card city-card">
       <div class="city-header">
         <h3 data-i18n="savedCities">شهرهای ذخیره‌شده</h3>
         <button id="addCity" class="button secondary" title="افزودن شهر فعلی"><span data-i18n="addCity">+ افزودن</span></button>
@@ -89,6 +111,7 @@
           <button type="button" id="nextDay" class="date-nav" title="روز بعد">›</button>
         </div>
         <div class="updated" id="updatedAt">—</div>
+        <div class="data-meta" id="dataMeta">—</div>
       </div>
       <div class="current-body">
         <div id="currentIcon" class="wx-icon" aria-hidden="true"></div>
@@ -103,7 +126,7 @@
     </section>
 
     <!-- Stats Cards با طراحی جدید -->
-    <section class="stats-grid">
+    <section id="stats" class="stats-grid">
       <div class="stat-card temp-card">
         <div class="stat-icon">🌡️</div>
         <div class="stat-content">
@@ -241,7 +264,20 @@
       <div id="dailyList" class="days"></div>
     </section>
 
-    <section class="card">
+    <section id="map" class="card map-card">
+      <div class="section-header">
+        <h3 data-i18n="radarMap">🗺️ رادار و نقشه</h3>
+        <div class="map-controls">
+          <button id="radarPlay" class="button secondary" type="button" data-i18n="radarPlay">پخش</button>
+          <input id="radarFrame" type="range" min="0" max="0" value="0" step="1" aria-label="Radar frame">
+          <span id="radarTime" class="radar-time">—</span>
+        </div>
+      </div>
+      <div id="wxMap" class="wx-map" aria-label="Weather map"></div>
+      <div class="map-attrib" data-i18n="radarAttribution">Radar: RainViewer • Map: OpenStreetMap</div>
+    </section>
+
+    <section id="history" class="card">
       <h3 data-i18n="precipHistory">📊 آمار تاریخی بارندگی</h3>
       <div class="history-tabs">
         <button class="history-tab active" data-period="week" data-i18n="lastWeek">هفته گذشته</button>
@@ -255,14 +291,21 @@
       <div id="historyStats" class="history-stats"></div>
     </section>
 
-    <section class="card">
+    <section id="tempHistory" class="card">
       <h3 data-i18n="tempHistory">🌡️ آمار تاریخی دما</h3>
+      <div class="history-tabs">
+        <button class="history-tab active" data-period="week" data-i18n="lastWeek">هفته گذشته</button>
+        <button class="history-tab" data-period="month" data-i18n="lastMonth">ماه گذشته</button>
+        <button class="history-tab" data-period="6months" data-i18n="last6Months">۶ ماه گذشته</button>
+        <button class="history-tab" data-period="year" data-i18n="lastYear">سال گذشته</button>
+      </div>
       <div class="chart-container">
         <canvas id="tempChart"></canvas>
       </div>
+      <div id="tempHistoryStats" class="history-stats"></div>
     </section>
 
-    <section class="card astronomy-card">
+    <section id="astronomy" class="card astronomy-card">
       <h3 data-i18n="sunMoon">☀️ خورشید و ماه</h3>
       
       <div class="sun-moon-track">
@@ -515,7 +558,7 @@
       </div>
     </section>
 
-    <section class="card solar-system-card">
+    <section id="solarSystemSection" class="card solar-system-card">
       <div class="solar-system-header">
         <h3 data-i18n="solarSystem">🪐 منظومه شمسی - موقعیت‌های واقعی نجومی</h3>
         <div class="time-controls">

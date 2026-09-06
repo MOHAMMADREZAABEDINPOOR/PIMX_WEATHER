@@ -26,7 +26,8 @@ body.theme-default {
 			#0c1820 88%,
 			#0b1220 100%
 		);
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 body.theme-sunny-day {
@@ -50,7 +51,8 @@ body.theme-sunny-day {
 			#0b1220 100%
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* استایل‌های سفارشی برای بهبود خوانایی در حال آفتابی */
@@ -226,7 +228,8 @@ body.theme-partly-cloudy {
 			#0b1220 100%
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* استایل‌های سفارشی برای بهبود خوانایی در تم صاف تا کمی ابری */
@@ -525,7 +528,8 @@ body.theme-cloudy {
 			#0b1220 100%
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* انیمیشن ابر برای روز ابری - بهبود یافته */
@@ -614,7 +618,8 @@ body.theme-rainy {
 			#0b1220 100%
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* افکت برق و رعد برای بارانی */
@@ -667,7 +672,8 @@ body.theme-thunderstorm {
 			#0b1220 100%
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* افکت برق و رعد قوی‌تر برای طوفان */
@@ -816,7 +822,8 @@ body.theme-snowy {
 			#0b1220 100%
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* بلور برای عناصر پس‌زمینه در هوای برفی برای خوانایی بهتر */
@@ -990,7 +997,8 @@ body.theme-night {
 			#0b1220 100%       /* سیاه کامل */
 		);
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 /* انیمیشن ستاره‌های شب */
@@ -3157,11 +3165,13 @@ html {
 
 /* Loading Screen */
 body:has(.loading-screen:not(.hidden)) {
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 body:has(.location-permission-modal.show) {
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 .loading-screen {

@@ -23,6 +23,7 @@ window.addEventListener('load', () => {
 // App State
 const state = {
 	unit: localStorage.getItem('unit') || 'C',
+	model: localStorage.getItem('wxModel') || 'best_match',
 	place: null,
 	weather: null,
 	savedCities: JSON.parse(localStorage.getItem('savedCities') || '[]'),
@@ -101,9 +102,11 @@ const el = {
 	moonPhaseNameBig: document.getElementById('moonPhaseNameBig'),
 	moonIllumination: document.getElementById('moonIllumination'),
 	solarSystem: document.getElementById('solarSystem'),
+	planetInfoBox: document.getElementById('planetInfoBox'),
 	precipChart: document.getElementById('precipChart'),
 	tempChart: document.getElementById('tempChart'),
 	historyStats: document.getElementById('historyStats'),
+	tempHistoryStats: document.getElementById('tempHistoryStats'),
 	localTime: document.getElementById('localTime'),
 	solarSystemHour: document.getElementById('solarSystemHour'),
 	solarSystemHourDisplay: document.getElementById('solarSystemHourDisplay'),
@@ -120,11 +123,30 @@ const el = {
 	locationPermissionModal: document.getElementById('locationPermissionModal'),
 	locationPermissionAllow: document.getElementById('locationPermissionAllow'),
 	locationPermissionDeny: document.getElementById('locationPermissionDeny'),
+	modelSelect: document.getElementById('modelSelect'),
+	dataMeta: document.getElementById('dataMeta'),
+	radarPlay: document.getElementById('radarPlay'),
+	radarFrame: document.getElementById('radarFrame'),
+	radarTime: document.getElementById('radarTime'),
+	wxMap: document.getElementById('wxMap'),
 };
 
 let precipChartInstance = null;
 let tempChartInstance = null;
 let clockInterval = null;
+
+// Map / Radar
+let mapInstance = null;
+let radarLayer = null;
+let radarFrames = [];
+let radarHost = 'https://tilecache.rainviewer.com';
+let radarIndex = 0;
+let radarTimer = null;
+let lastMapCenterKey = null;
+let pendingMapCenter = null;
+
+// Solar System UI state
+let selectedPlanetKey = 'earth';
 
 // ========= STAT CARD ANIMATIONS =========
 function updateStatCard(elementId, value, barId = null, barPercent = 0) {
@@ -272,10 +294,269 @@ const fmtDateLong = (iso, tz) => {
 	return tzDate(iso, tz).toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
 };
 
+function shouldRunBackgroundAnimations() {
+	const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+	const saveData = navigator.connection?.saveData;
+	return !reducedMotion && !saveData;
+}
+
 function showToast(msg, timeout = 3000) {
 	el.toast.textContent = msg;
 	el.toast.classList.add('show');
 	setTimeout(() => el.toast.classList.remove('show'), timeout);
+}
+
+// Section navigation (scroll-spy)
+function initSectionNav() {
+	const links = Array.from(document.querySelectorAll('.section-nav .section-link'));
+	if (links.length === 0) return;
+
+	const sectionIds = links
+		.map(a => (a.getAttribute('href') || '').trim())
+		.filter(href => href.startsWith('#'))
+		.map(href => href.slice(1));
+
+	const sections = sectionIds
+		.map(id => document.getElementById(id))
+		.filter(Boolean);
+
+	const setActive = (id) => {
+		links.forEach(a => a.classList.toggle('active', (a.getAttribute('href') || '') === `#${id}`));
+	};
+
+	links.forEach(a => {
+		const href = (a.getAttribute('href') || '').trim();
+		if (!href.startsWith('#')) return;
+		const id = href.slice(1);
+		a.addEventListener('click', () => setActive(id));
+	});
+
+	if (!('IntersectionObserver' in window) || sections.length === 0) return;
+	const observer = new IntersectionObserver((entries) => {
+		const visible = entries
+			.filter(e => e.isIntersecting)
+			.sort((a, b) => (b.intersectionRatio || 0) - (a.intersectionRatio || 0))[0];
+		if (!visible) return;
+		setActive(visible.target.id);
+	}, {
+		root: null,
+		rootMargin: '-35% 0px -55% 0px',
+		threshold: [0.01, 0.05, 0.1, 0.2, 0.35, 0.5],
+	});
+
+	sections.forEach(s => observer.observe(s));
+}
+
+function getForecastModelLabel(model) {
+	switch (model) {
+		case 'best_match':
+			return t('modelBest');
+		case 'ecmwf_ifs04':
+			return t('modelECMWF');
+		case 'gfs_global':
+			return t('modelGFS');
+		case 'icon_global':
+			return t('modelICON');
+		default:
+			return model || '';
+	}
+}
+
+function updateDataMeta() {
+	if (!el.dataMeta) return;
+
+	const parts = [];
+	parts.push(`${t('dataSource')}: Open‑Meteo`);
+
+	const modelLabel = getForecastModelLabel(state.model);
+	if (modelLabel) parts.push(`${t('dataModel')}: ${modelLabel}`);
+
+	if (state.weather?.elevation != null) {
+		const elevation = formatNumber(Math.round(state.weather.elevation));
+		parts.push(`${t('dataElevation')}: ${elevation} m`);
+	}
+
+	if (state.place?.lat != null && state.place?.lon != null) {
+		const sep = currentLang === 'fa' ? '، ' : ', ';
+		const lat = formatNumber(Number(state.place.lat.toFixed(2)));
+		const lon = formatNumber(Number(state.place.lon.toFixed(2)));
+		parts.push(`${t('dataCoords')}: ${lat}${sep}${lon}`);
+	}
+
+	el.dataMeta.textContent = parts.join(' • ');
+}
+
+function getForecastHourStartMs() {
+	const offsetMs = (state.weather?.utcOffsetSeconds || 0) * 1000;
+	const localMs = Date.now() + offsetMs;
+	return Math.floor(localMs / 3600000) * 3600000 - offsetMs;
+}
+
+// Map + radar (lazy-init)
+function setupMapLazyInit() {
+	const mapSection = document.getElementById('map');
+	if (!mapSection || !el.wxMap) return;
+
+	const start = () => {
+		initMap();
+		// Ensure view sync after init (if place was loaded earlier)
+		syncMapToPlace();
+	};
+
+	if (!('IntersectionObserver' in window)) {
+		start();
+		return;
+	}
+
+	const observer = new IntersectionObserver((entries) => {
+		if (!entries.some(e => e.isIntersecting)) return;
+		observer.disconnect();
+		start();
+	}, { rootMargin: '320px 0px' });
+
+	observer.observe(mapSection);
+}
+
+function initMap() {
+	if (!el.wxMap || mapInstance) return;
+
+	if (typeof L === 'undefined') {
+		el.wxMap.innerHTML = `<div style="padding:16px;color:var(--muted);text-align:center">${t('mapUnavailable') || 'Map failed to load.'}</div>`;
+		return;
+	}
+
+	mapInstance = L.map(el.wxMap, {
+		zoomControl: false,
+		attributionControl: true,
+		scrollWheelZoom: false,
+		tap: true,
+	});
+	L.control.zoom({ position: 'topright' }).addTo(mapInstance);
+
+	L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+		maxZoom: 19,
+		attribution: '&copy; OpenStreetMap contributors',
+	}).addTo(mapInstance);
+
+	// Radar pane above base tiles
+	const radarPane = mapInstance.createPane('radarPane');
+	radarPane.style.zIndex = '450';
+	radarPane.style.pointerEvents = 'none';
+
+	const initialCenter = pendingMapCenter || (state.place?.lat && state.place?.lon ? { lat: state.place.lat, lon: state.place.lon } : null);
+	if (initialCenter) {
+		pendingMapCenter = null;
+		lastMapCenterKey = `${initialCenter.lat.toFixed(4)},${initialCenter.lon.toFixed(4)}`;
+		mapInstance.setView([initialCenter.lat, initialCenter.lon], 7);
+	} else {
+		mapInstance.setView([35.6892, 51.3890], 6);
+	}
+
+	// Controls
+	if (el.radarFrame) {
+		el.radarFrame.addEventListener('input', () => setRadarFrame(Number(el.radarFrame.value)));
+	}
+	if (el.radarPlay) {
+		el.radarPlay.addEventListener('click', () => toggleRadarPlayback());
+	}
+
+	// Load frames
+	loadRadarFrames();
+
+	// Fix sizing on first paint
+	setTimeout(() => mapInstance?.invalidateSize(), 250);
+}
+
+async function loadRadarFrames() {
+	try {
+		const data = await fetchJson('https://api.rainviewer.com/public/weather-maps.json');
+		radarHost = data.host || radarHost;
+		const frames = [...(data.radar?.past || []), ...(data.radar?.nowcast || [])]
+			.filter(f => f && typeof f.time === 'number' && typeof f.path === 'string');
+
+		radarFrames = frames;
+		if (el.radarFrame) {
+			el.radarFrame.min = 0;
+			el.radarFrame.max = Math.max(0, radarFrames.length - 1);
+		}
+
+		setRadarFrame(Math.max(0, radarFrames.length - 1));
+	} catch (e) {
+		console.error('❌ Radar frames failed:', e);
+		if (el.radarTime) el.radarTime.textContent = '—';
+	}
+}
+
+function setRadarFrame(nextIndex) {
+	if (!mapInstance || radarFrames.length === 0) return;
+
+	radarIndex = Math.max(0, Math.min(nextIndex, radarFrames.length - 1));
+	const frame = radarFrames[radarIndex];
+	const urlTemplate = `${radarHost}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+
+	if (!radarLayer) {
+		radarLayer = L.tileLayer(urlTemplate, {
+			opacity: 0.88,
+			pane: 'radarPane',
+			zIndex: 450,
+			crossOrigin: true,
+			className: 'wx-radar-layer',
+			updateWhenIdle: true,
+			keepBuffer: 2,
+		});
+		radarLayer.addTo(mapInstance);
+	} else {
+		radarLayer.setUrl(urlTemplate);
+		radarLayer.setOpacity(0.88);
+	}
+
+	if (el.radarFrame) el.radarFrame.value = String(radarIndex);
+	if (el.radarTime) {
+		const tz = state.weather?.timezone;
+		const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
+		const date = new Date(frame.time * 1000);
+		el.radarTime.textContent = date.toLocaleTimeString(locale, {
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: currentLang !== 'fa',
+			...(tz ? { timeZone: tz } : {}),
+		});
+	}
+}
+
+function toggleRadarPlayback() {
+	const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+	if (reducedMotion) return;
+
+	if (radarTimer) {
+		clearInterval(radarTimer);
+		radarTimer = null;
+		if (el.radarPlay) el.radarPlay.textContent = t('radarPlay');
+		return;
+	}
+
+	if (el.radarPlay) el.radarPlay.textContent = t('radarStop');
+	radarTimer = setInterval(() => {
+		if (radarFrames.length === 0) return;
+		const next = (radarIndex + 1) % radarFrames.length;
+		setRadarFrame(next);
+	}, 650);
+}
+
+function syncMapToPlace() {
+	if (!state.place?.lat || !state.place?.lon) return;
+
+	const key = `${state.place.lat.toFixed(4)},${state.place.lon.toFixed(4)}`;
+	if (key === lastMapCenterKey) return;
+
+	if (!mapInstance) {
+		pendingMapCenter = { lat: state.place.lat, lon: state.place.lon };
+		return;
+	}
+
+	lastMapCenterKey = key;
+	const targetZoom = Math.max(mapInstance.getZoom() || 0, 7);
+	mapInstance.setView([state.place.lat, state.place.lon], targetZoom, { animate: true });
 }
 
 // Loading Card Functions
@@ -1069,6 +1350,7 @@ function renderIcon(container, type, size = 'large') {
 
 function setTheme(info) {
 	const b = document.body;
+	const runAnimations = shouldRunBackgroundAnimations();
 	
 	// حذف انیمیشن‌های قبلی
 	document.querySelectorAll('.animated-sun, .animated-cloud, .animated-bird, .animated-dark-cloud, .animated-rain-drop, .animated-rain-cloud, .animated-lightning, .animated-snowflake, .animated-moon, .animated-star, .animated-shooting-star, .static-rain-cloud, .static-snow-cloud').forEach(el => el.remove());
@@ -1078,31 +1360,31 @@ function setTheme(info) {
 	switch (info.theme) {
 		case 'sunny-day': 
 			b.classList.add('theme-sunny-day');
-			createDayAnimations();
+			if (runAnimations) createDayAnimations();
 			break;
 		case 'partly-cloudy-day':
 			b.classList.add('theme-partly-cloudy');
-			createPartlyCloudyAnimations();
+			if (runAnimations) createPartlyCloudyAnimations();
 			break;
 		case 'cloudy-day': 
 			b.classList.add('theme-cloudy');
-			createCloudyAnimations();
+			if (runAnimations) createCloudyAnimations();
 			break;
 		case 'rainy-day': 
 			b.classList.add('theme-rainy');
-			createRainyAnimations();
+			if (runAnimations) createRainyAnimations();
 			break;
 		case 'thunderstorm-day':
 			b.classList.add('theme-thunderstorm');
-			createThunderstormAnimations();
+			if (runAnimations) createThunderstormAnimations();
 			break;
 		case 'snowy-day':
 			b.classList.add('theme-snowy');
-			createSnowyAnimations();
+			if (runAnimations) createSnowyAnimations();
 			break;
 		case 'night': 
 			b.classList.add('theme-night');
-			createNightAnimations();
+			if (runAnimations) createNightAnimations();
 			break;
 		default: b.classList.add('theme-default');
 	}
@@ -1693,7 +1975,10 @@ async function reverseGeocode(lat, lon) {
 }
 
 async function fetchWeather(lat, lon) {
-	const url = `${OPEN_METEO.forecast}?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,is_day,surface_pressure,visibility,dew_point_2m,uv_index&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,precipitation_probability_max,uv_index_max&timezone=auto&forecast_days=16`;
+	const allowedModels = new Set(['best_match', 'ecmwf_ifs04', 'gfs_global', 'icon_global']);
+	const selectedModel = allowedModels.has(state.model) ? state.model : 'best_match';
+	const model = encodeURIComponent(selectedModel);
+	const url = `${OPEN_METEO.forecast}?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,is_day,surface_pressure,visibility,dew_point_2m,uv_index&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,precipitation_probability_max,uv_index_max&timezone=auto&forecast_days=16&models=${model}&temperature_unit=celsius&windspeed_unit=ms&precipitation_unit=mm&timeformat=iso8601`;
 	const data = await fetchJson(url);
 	return normalizeWeather(data);
 }
@@ -1738,6 +2023,11 @@ async function fetchHistoricalData(lat, lon, period) {
 function normalizeWeather(data) {
 	const tz = data.timezone || 'auto';
 	const utcOffsetSeconds = data.utc_offset_seconds || 0;
+
+	const offsetHours = Math.floor(Math.abs(utcOffsetSeconds) / 3600);
+	const offsetMinutes = Math.floor((Math.abs(utcOffsetSeconds) % 3600) / 60);
+	const offsetSign = utcOffsetSeconds >= 0 ? '+' : '-';
+	const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
 	
 	// Helper function to convert local time string to proper ISO with timezone offset
 	const toISOWithOffset = (localTimeStr) => {
@@ -1746,18 +2036,20 @@ function normalizeWeather(data) {
 		if (localTimeStr.includes('+') || localTimeStr.includes('Z') || localTimeStr.match(/[+-]\d{2}:\d{2}$/)) {
 			return localTimeStr;
 		}
-		// اضافه کردن timezone offset به فرمت ISO
-		const offsetHours = Math.floor(Math.abs(utcOffsetSeconds) / 3600);
-		const offsetMinutes = Math.floor((Math.abs(utcOffsetSeconds) % 3600) / 60);
-		const offsetSign = utcOffsetSeconds >= 0 ? '+' : '-';
-		const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
 		return `${localTimeStr}${offsetStr}`;
+	};
+
+	// For daily dates (YYYY-MM-DD) keep the local date stable by anchoring at noon.
+	const toISODateWithOffset = (dateStr) => {
+		if (!dateStr) return dateStr;
+		if (dateStr.includes('T')) return toISOWithOffset(dateStr);
+		return `${dateStr}T12:00${offsetStr}`;
 	};
 	
 	let current = {};
 	if (data.current) {
 		current = {
-			time: data.current.time,
+			time: toISOWithOffset(data.current.time),
 			tempC: data.current.temperature_2m,
 			apparentC: data.current.apparent_temperature,
 			humidity: data.current.relative_humidity_2m,
@@ -1776,7 +2068,7 @@ function normalizeWeather(data) {
 	if (data.hourly?.time) {
 		for (let i = 0; i < data.hourly.time.length; i++) {
 			hourly.push({
-				time: data.hourly.time[i],
+				time: toISOWithOffset(data.hourly.time[i]),
 				tempC: data.hourly.temperature_2m?.[i],
 				humidity: data.hourly.relative_humidity_2m?.[i],
 				precipProb: data.hourly.precipitation_probability?.[i],
@@ -1792,7 +2084,7 @@ function normalizeWeather(data) {
 	if (data.daily?.time) {
 		for (let i = 0; i < data.daily.time.length; i++) {
 			daily.push({
-				time: data.daily.time[i],
+				time: toISODateWithOffset(data.daily.time[i]),
 				code: data.daily.weather_code?.[i],
 				minC: data.daily.temperature_2m_min?.[i],
 				maxC: data.daily.temperature_2m_max?.[i],
@@ -1805,7 +2097,19 @@ function normalizeWeather(data) {
 			});
 		}
 	}
-	return { timezone: tz, current, hourly, daily };
+	return {
+		timezone: tz,
+		utcOffsetSeconds,
+		latitude: data.latitude,
+		longitude: data.longitude,
+		elevation: data.elevation,
+		currentUnits: data.current_units || null,
+		hourlyUnits: data.hourly_units || null,
+		dailyUnits: data.daily_units || null,
+		current,
+		hourly,
+		daily,
+	};
 }
 
 // Calculate average daily weather condition from hourly data
@@ -1949,26 +2253,16 @@ function renderSelectedDay() {
 	// برای نمایش، فقط ساعات آینده را فیلتر می‌کنیم
 	let hourlyForDay = allHourlyForDay;
 	if (state.selectedDayIndex === 0) {
-		const now = new Date();
-		// گرد کردن ساعت فعلی به پایین (برای اینکه ساعت فعلی را هم شامل کنیم)
-		const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
-		hourlyForDay = allHourlyForDay.filter(h => {
-			const hourTime = new Date(h.time);
-			// گرد کردن ساعت داده به پایین برای مقایسه دقیق
-			const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
-			return hourTimeFloored >= currentHour;
-		});
+		const hourStartMs = getForecastHourStartMs();
+		hourlyForDay = allHourlyForDay.filter(h => new Date(h.time).getTime() >= hourStartMs);
 		
 		// اگر ساعات امروز کافی نیست، ساعات فردا را هم اضافه کن تا 24 ساعت کامل شود
 		if (hourlyForDay.length < 24 && state.weather.daily.length > 1) {
 			const tomorrowData = state.weather.daily[1];
 			const tomorrowStr = tomorrowData.time.split('T')[0];
-			const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
-			const tomorrowHours = state.weather.hourly.filter(h => {
-				const hourTime = new Date(h.time);
-				const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
-				return h.time.startsWith(tomorrowStr) && hourTimeFloored >= currentHour;
-			});
+			const tomorrowHours = state.weather.hourly.filter(h =>
+				h.time.startsWith(tomorrowStr) && new Date(h.time).getTime() >= hourStartMs
+			);
 			
 			// اضافه کردن ساعات فردا تا رسیدن به 24 ساعت
 			hourlyForDay = [...hourlyForDay, ...tomorrowHours].slice(0, 24);
@@ -2136,6 +2430,8 @@ function renderSelectedDay() {
 	renderDaily();
 	renderSunMoonTracks(dayData, tz, dateForMoon);
 	renderSolarSystem(moonData.phase);
+	updateDataMeta();
+	syncMapToPlace();
 }
 
 function renderHourlyForDay(hourlyData, tz) {
@@ -2145,43 +2441,8 @@ function renderHourlyForDay(hourlyData, tz) {
 		return;
 	}
 	
-	// اگر امروز است، فقط ساعات آینده را نمایش بده (نه ساعت‌های گذشته)
-	let filteredHourlyData = hourlyData;
-	if (state.selectedDayIndex === 0) {
-		const now = new Date();
-		// گرد کردن ساعت فعلی به پایین (برای اینکه ساعت فعلی را هم شامل کنیم)
-		const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
-		filteredHourlyData = hourlyData.filter(h => {
-			const hourTime = new Date(h.time);
-			// گرد کردن ساعت داده به پایین برای مقایسه دقیق
-			const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
-			return hourTimeFloored >= currentHour;
-		});
-		
-		// اگر ساعات امروز کافی نیست، ساعات فردا را هم اضافه کن تا 24 ساعت کامل شود
-		if (filteredHourlyData.length < 24 && state.weather.daily.length > 1) {
-			const tomorrowData = state.weather.daily[1];
-			const tomorrowStr = tomorrowData.time.split('T')[0];
-			const currentHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
-			const tomorrowHours = state.weather.hourly.filter(h => {
-				const hourTime = new Date(h.time);
-				const hourTimeFloored = new Date(hourTime.getFullYear(), hourTime.getMonth(), hourTime.getDate(), hourTime.getHours(), 0, 0, 0);
-				return h.time.startsWith(tomorrowStr) && hourTimeFloored >= currentHour;
-			});
-			
-			// اضافه کردن ساعات فردا تا رسیدن به 24 ساعت
-			filteredHourlyData = [...filteredHourlyData, ...tomorrowHours].slice(0, 24);
-		} else {
-			// محدود کردن به 24 ساعت آینده
-			filteredHourlyData = filteredHourlyData.slice(0, 24);
-		}
-		
-		// اگر بعد از فیلتر هیچ داده‌ای باقی نماند، پیام نمایش بده
-		if (filteredHourlyData.length === 0) {
-			el.hourlyList.innerHTML = `<div style="color: var(--muted); padding: 20px; text-align: center;">${t('noHourlyData')}</div>`;
-			return;
-		}
-	}
+	// نمایش حداکثر 24 ساعت (برای امروز، داده‌ها در renderSelectedDay آماده‌سازی می‌شوند)
+	const filteredHourlyData = hourlyData.slice(0, 24);
 	
 	// دریافت طلوع و غروب برای بررسی دقیق شب/روز
 	const dayData = state.weather?.daily?.[state.selectedDayIndex];
@@ -2931,6 +3192,44 @@ function renderMoonPhase(moonData) {
 	}
 }
 
+function updatePlanetInfoBox(planetName, pos, currentDate, locale, hour12) {
+	if (!el.planetInfoBox) return;
+
+	if (!pos) {
+		el.planetInfoBox.innerHTML = `
+			<div class="planet-info-title">${t('solarPickPlanet')}</div>
+			<div class="planet-info-sub">${t('solarPickPlanetHint')}</div>
+		`;
+		return;
+	}
+
+	const distanceAU = Number(pos.distance.toFixed(3));
+	const distanceMKM = Number((pos.distance * 149.6).toFixed(1));
+	const zLabel = pos.z >= 0 ? t('abovePlane') : t('belowPlane');
+
+	el.planetInfoBox.innerHTML = `
+		<div class="planet-info-head">
+			<div class="planet-info-title">${planetName}</div>
+			<div class="planet-info-sub">${currentDate.toLocaleDateString(locale)} • ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}</div>
+		</div>
+		<div class="planet-info-grid">
+			<div class="pi-item">
+				<div class="pi-k">${t('distance')}</div>
+				<div class="pi-v">${formatNumber(distanceAU)} AU</div>
+				<div class="pi-s">${formatNumber(distanceMKM)} ${t('millionKm')}</div>
+			</div>
+			<div class="pi-item">
+				<div class="pi-k">${t('solarCoords')}</div>
+				<div class="pi-v">X ${formatNumber(Number(pos.x.toFixed(3)))} • Y ${formatNumber(Number(pos.y.toFixed(3)))} • Z ${formatNumber(Number(pos.z.toFixed(3)))}</div>
+				<div class="pi-s">${zLabel}</div>
+			</div>
+		</div>
+		<div class="planet-info-foot">
+			💡 <span>${t('solarSystemNote1')}</span>
+		</div>
+	`;
+}
+
 function renderSolarSystem(moonPhase) {
 	el.solarSystem.innerHTML = '';
 	
@@ -2961,8 +3260,6 @@ function renderSolarSystem(moonPhase) {
 		}
 	}
 	
-	console.log('🪐 موقعیت سیارات برای:', currentDate.toLocaleString('fa-IR'));
-	
 	const sun = document.createElement('div');
 	sun.className = 'sun-center';
 	sun.title = `${t('sun')} - ${currentDate.toLocaleDateString(locale)} ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}`;
@@ -2980,6 +3277,9 @@ function renderSolarSystem(moonPhase) {
 	];
 	
 	const zoom = state.solarSystemZoom || 1.0;
+	if (!selectedPlanetKey) selectedPlanetKey = 'earth';
+	let selectedPlanetPos = null;
+	let selectedPlanetName = null;
 	
 	planets.forEach(p => {
 		const orbit = document.createElement('div');
@@ -2995,21 +3295,13 @@ function renderSolarSystem(moonPhase) {
 		const y = -pos.y * scale; // معکوس کردن Y برای تطابق با CSS (بالا منفی است)
 		
 		const planetName = t(p.nameKey);
-		const zPosition = pos.z > 0 ? 'بالای صفحه' : 'زیر صفحه';
-		console.log(`${planetName}: فاصله ${pos.distance.toFixed(3)} AU، موقعیت (${x.toFixed(1)}, ${y.toFixed(1)})px، Z: ${pos.z.toFixed(3)} (${zPosition})`);
-		
-		// DEBUG خاص زحل
-		if (p.key === 'saturn') {
-			console.log('🪐 زحل جزئیات کامل:');
-			console.log('  - x:', x.toFixed(2), 'px');
-			console.log('  - y:', y.toFixed(2), 'px');
-			console.log('  - displayRadius:', p.displayRadius);
-			console.log('  - scale:', scale.toFixed(2));
-			console.log('  - zoom:', zoom);
-		}
 		
 		const planet = document.createElement('div');
 		planet.className = `planet ${p.cls}`;
+		planet.dataset.key = p.key;
+		planet.tabIndex = 0;
+		planet.setAttribute('role', 'button');
+		planet.setAttribute('aria-label', planetName);
 		planet.style.left = `calc(50% + ${x}px - ${p.size/2}px)`;
 		planet.style.top = `calc(50% + ${y}px - ${p.size/2}px)`;
 		
@@ -3037,6 +3329,23 @@ function renderSolarSystem(moonPhase) {
 		planet.appendChild(label);
 		
 		el.solarSystem.appendChild(planet);
+
+		const selectThisPlanet = () => {
+			selectedPlanetKey = p.key;
+			selectedPlanetPos = pos;
+			selectedPlanetName = planetName;
+			el.solarSystem.querySelectorAll('.planet[data-key]').forEach(node => {
+				node.classList.toggle('selected', node.dataset.key === selectedPlanetKey);
+			});
+			updatePlanetInfoBox(selectedPlanetName, selectedPlanetPos, currentDate, locale, hour12);
+		};
+		planet.addEventListener('click', selectThisPlanet);
+		planet.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				selectThisPlanet();
+			}
+		});
 		
 		if (p.hasMoon) {
 			const moon = document.createElement('div');
@@ -3050,13 +3359,23 @@ function renderSolarSystem(moonPhase) {
 			moon.title = t('moon');
 			planet.appendChild(moon);
 		}
+
+		if (p.key === selectedPlanetKey) {
+			planet.classList.add('selected');
+			selectedPlanetPos = pos;
+			selectedPlanetName = planetName;
+		}
 	});
 	
 	// برچسب تاریخ
 	const dateLabel = document.createElement('div');
-	dateLabel.style.cssText = 'position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); padding: 6px 12px; border-radius: 8px; font-size: 11px; color: var(--accent); border: 1px solid var(--border);';
+	dateLabel.className = 'solar-date-label';
 	dateLabel.textContent = `${currentDate.toLocaleDateString(locale)} - ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}`;
 	el.solarSystem.appendChild(dateLabel);
+
+	if (selectedPlanetName && selectedPlanetPos) {
+		updatePlanetInfoBox(selectedPlanetName, selectedPlanetPos, currentDate, locale, hour12);
+	}
 }
 
 // Historical charts
@@ -3075,6 +3394,7 @@ async function loadHistoricalData(period = 'week') {
 		renderPrecipChart(null);
 		renderTempChart(null);
 		renderHistoryStats(null);
+		renderTempHistoryStats(null);
 		return;
 	}
 	
@@ -3083,6 +3403,66 @@ async function loadHistoricalData(period = 'week') {
 	renderPrecipChart(data);
 	renderTempChart(data);
 	renderHistoryStats(data);
+	renderTempHistoryStats(data);
+}
+
+function renderTempHistoryStats(data) {
+	if (!el.tempHistoryStats) return;
+
+	if (!data || !data.temperature_2m_max || !data.temperature_2m_min || !data.time) {
+		el.tempHistoryStats.innerHTML = `
+			<div style="text-align: center; color: var(--muted); padding: 20px;">
+				${t('noData') || 'داده‌ای موجود نیست'}
+			</div>
+		`;
+		return;
+	}
+
+	const maxArr = data.temperature_2m_max;
+	const minArr = data.temperature_2m_min;
+	const timeArr = data.time;
+	if (maxArr.length === 0 || minArr.length === 0 || timeArr.length === 0) return;
+
+	const avgMax = maxArr.reduce((a, b) => a + (b ?? 0), 0) / maxArr.length;
+	const avgMin = minArr.reduce((a, b) => a + (b ?? 0), 0) / minArr.length;
+
+	let hottest = -Infinity;
+	let hottestIdx = 0;
+	maxArr.forEach((v, idx) => {
+		if (v == null) return;
+		if (v > hottest) { hottest = v; hottestIdx = idx; }
+	});
+
+	let coldest = Infinity;
+	let coldestIdx = 0;
+	minArr.forEach((v, idx) => {
+		if (v == null) return;
+		if (v < coldest) { coldest = v; coldestIdx = idx; }
+	});
+
+	const tz = state.weather?.timezone || undefined;
+	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
+	const hottestDate = new Date(timeArr[hottestIdx]).toLocaleDateString(locale, { month: 'short', day: 'numeric', ...(tz ? { timeZone: tz } : {}) });
+	const coldestDate = new Date(timeArr[coldestIdx]).toLocaleDateString(locale, { month: 'short', day: 'numeric', ...(tz ? { timeZone: tz } : {}) });
+
+	el.tempHistoryStats.innerHTML = `
+		<div class="stat-item">
+			<div class="stat-label">${t('avgMax')}</div>
+			<div class="stat-value">${fmtTemp(avgMax)}</div>
+		</div>
+		<div class="stat-item">
+			<div class="stat-label">${t('avgMin')}</div>
+			<div class="stat-value">${fmtTemp(avgMin)}</div>
+		</div>
+		<div class="stat-item">
+			<div class="stat-label">${t('warmestDay')}</div>
+			<div class="stat-value">${fmtTemp(hottest)} <span style="color:var(--muted);font-size:12px;font-weight:600">(${hottestDate})</span></div>
+		</div>
+		<div class="stat-item">
+			<div class="stat-label">${t('coldestDay')}</div>
+			<div class="stat-value">${fmtTemp(coldest)} <span style="color:var(--muted);font-size:12px;font-weight:600">(${coldestDate})</span></div>
+		</div>
+	`;
 }
 
 function renderPrecipChart(data) {
@@ -3458,15 +3838,22 @@ function openSuggestions(items) {
 		it.id = `sugg-${idx}`;
 		it.innerHTML = `<div class="title">${p.name}</div><div class="sub">${[p.admin1, p.country].filter(Boolean).join('، ')}</div>`;
 		it.addEventListener('click', () => selectPlace(p));
-		it.addEventListener('keydown', (e) => { if (e.key === 'Enter') selectPlace(p); });
+		it.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') selectPlace(p);
+			if (e.key === 'Escape') { closeSuggestions(); el.searchInput.focus(); }
+			if (e.key === 'ArrowDown') { e.preventDefault(); it.nextElementSibling?.focus(); }
+			if (e.key === 'ArrowUp') { e.preventDefault(); (it.previousElementSibling || el.searchInput).focus(); }
+		});
 		el.suggestions.appendChild(it);
 	});
 	el.suggestions.classList.toggle('open', items.length > 0);
+	el.searchInput.setAttribute('aria-expanded', items.length > 0 ? 'true' : 'false');
 }
 
 function closeSuggestions() {
 	el.suggestions.classList.remove('open');
 	el.suggestions.innerHTML = '';
+	el.searchInput.setAttribute('aria-expanded', 'false');
 }
 
 async function selectPlace(p) {
@@ -3499,6 +3886,14 @@ el.searchInput.addEventListener('input', debounce(async () => {
 		openSuggestions(items);
 	} catch { }
 }, 300));
+
+el.searchInput.addEventListener('keydown', (e) => {
+	if (e.key === 'Escape') closeSuggestions();
+	if (e.key === 'ArrowDown' && el.suggestions.classList.contains('open')) {
+		e.preventDefault();
+		el.suggestions.querySelector('.item')?.focus();
+	}
+});
 
 document.addEventListener('click', (e) => {
 	if (!el.suggestions.contains(e.target) && e.target !== el.searchInput) closeSuggestions();
@@ -3569,11 +3964,11 @@ el.view14d.addEventListener('click', () => {
 	renderDaily();
 });
 
-document.querySelectorAll('.history-tab').forEach(tab => {
+const historyTabs = Array.from(document.querySelectorAll('.history-tab'));
+historyTabs.forEach(tab => {
 	tab.addEventListener('click', async () => {
-		document.querySelectorAll('.history-tab').forEach(t => t.classList.remove('active'));
-		tab.classList.add('active');
 		const period = tab.dataset.period;
+		historyTabs.forEach(t => t.classList.toggle('active', t.dataset.period === period));
 		await loadHistoricalData(period);
 	});
 });
@@ -3593,6 +3988,7 @@ el.unitC.addEventListener('click', () => {
 	if (state.historyData) {
 		renderTempChart(state.historyData);
 		renderHistoryStats(state.historyData);
+		renderTempHistoryStats(state.historyData);
 	}
 });
 
@@ -3604,54 +4000,101 @@ el.unitF.addEventListener('click', () => {
 	if (state.historyData) {
 		renderTempChart(state.historyData);
 		renderHistoryStats(state.historyData);
+		renderTempHistoryStats(state.historyData);
 	}
 });
+
+function applyModelSelect() {
+	if (!el.modelSelect) return;
+	const allowedModels = new Set(['best_match', 'ecmwf_ifs04', 'gfs_global', 'icon_global']);
+	if (!allowedModels.has(state.model)) {
+		state.model = 'best_match';
+		localStorage.setItem('wxModel', state.model);
+	}
+	el.modelSelect.value = state.model;
+}
+
+async function reloadForecastForCurrentPlace() {
+	if (!state.place?.lat || !state.place?.lon) return;
+
+	showLoadingCard(t('loadingModel'));
+	try {
+		const weather = await fetchWeather(state.place.lat, state.place.lon);
+		const aqi = await fetchAirQuality(state.place.lat, state.place.lon);
+		state.weather = weather;
+		state.airQuality = aqi;
+		state.place = { ...state.place, timezone: weather.timezone };
+		renderSelectedDay();
+		hideLoadingCard();
+	} catch (e) {
+		hideLoadingCard();
+		showToast(t('fetchError'));
+	}
+}
+
+if (el.modelSelect) {
+	applyModelSelect();
+	el.modelSelect.addEventListener('change', async () => {
+		const next = el.modelSelect.value;
+		if (!next || next === state.model) return;
+		state.model = next;
+		localStorage.setItem('wxModel', next);
+
+		if (state.weather && state.place?.lat && state.place?.lon) {
+			await reloadForecastForCurrentPlace();
+		} else {
+			updateDataMeta();
+		}
+	});
+}
 
 // Language toggle buttons
 const langFa = document.getElementById('langFa');
 const langEn = document.getElementById('langEn');
 
-if (langFa) {
-	langFa.addEventListener('click', async () => {
-		changeLanguage('fa');
-		langFa.classList.add('active');
-		langEn.classList.remove('active');
-		if (state.weather) {
+	if (langFa) {
+		langFa.addEventListener('click', async () => {
+			changeLanguage('fa');
+			langFa.classList.add('active');
+			langEn.classList.remove('active');
+			if (state.weather) {
 			// Restart live clock with new language
 			if (state.weather.timezone) {
 				startLiveClock(state.weather.timezone);
 			}
 			renderSelectedDay();
 			// Re-render charts with new language
-			if (state.historyData) {
-				renderPrecipChart(state.historyData);
-				renderTempChart(state.historyData);
-				renderHistoryStats(state.historyData);
+				if (state.historyData) {
+					renderPrecipChart(state.historyData);
+					renderTempChart(state.historyData);
+					renderHistoryStats(state.historyData);
+					renderTempHistoryStats(state.historyData);
+				}
 			}
-		}
-	});
-}
+		});
+	}
 
-if (langEn) {
-	langEn.addEventListener('click', async () => {
-		changeLanguage('en');
-		langEn.classList.add('active');
-		langFa.classList.remove('active');
-		if (state.weather) {
+	if (langEn) {
+		langEn.addEventListener('click', async () => {
+			changeLanguage('en');
+			langEn.classList.add('active');
+			langFa.classList.remove('active');
+			if (state.weather) {
 			// Restart live clock with new language
 			if (state.weather.timezone) {
 				startLiveClock(state.weather.timezone);
 			}
 			renderSelectedDay();
 			// Re-render charts with new language
-			if (state.historyData) {
-				renderPrecipChart(state.historyData);
-				renderTempChart(state.historyData);
-				renderHistoryStats(state.historyData);
+				if (state.historyData) {
+					renderPrecipChart(state.historyData);
+					renderTempChart(state.historyData);
+					renderHistoryStats(state.historyData);
+					renderTempHistoryStats(state.historyData);
+				}
 			}
-		}
-	});
-}
+		});
+	}
 
 // Set initial language button state
 function applyLangButtons() {
@@ -3878,6 +4321,8 @@ function improveScrollBehavior() {
 	
 	applyUnitButtons();
 	renderCityTabs();
+	initSectionNav();
+	setupMapLazyInit();
 	
 	// بهبود رفتار اسکرول
 	setTimeout(() => improveScrollBehavior(), 1000);

@@ -7,6 +7,28 @@ const translations = {
 		useLocation: '📍 موقعیت من',
 		unitC: '°C',
 		unitF: '°F',
+		forecastModel: 'مدل پیش‌بینی',
+		modelBest: 'بهترین تطبیق',
+		modelECMWF: 'ECMWF',
+		modelGFS: 'GFS',
+		modelICON: 'ICON',
+		navCities: 'شهرها',
+		navNow: 'اکنون',
+		navHourly: 'ساعتی',
+		navDaily: 'روزانه',
+		navMap: 'نقشه',
+		navHistory: 'تاریخچه',
+		navAstronomy: 'نجوم',
+		navSolarSystem: 'منظومه',
+		radarMap: '🗺️ رادار و نقشه',
+		radarPlay: 'پخش',
+		radarStop: 'توقف',
+		radarAttribution: 'رادار: RainViewer • نقشه: OpenStreetMap',
+		mapUnavailable: 'نقشه بارگذاری نشد.',
+		dataSource: 'منبع',
+		dataModel: 'مدل',
+		dataElevation: 'ارتفاع',
+		dataCoords: 'مختصات',
 		
 		// Cities
 		savedCities: 'شهرهای ذخیره‌شده',
@@ -49,6 +71,8 @@ const translations = {
 		avgMax: 'میانگین حداکثر',
 		avgMin: 'میانگین حداقل',
 		maxDaily: 'بیشترین بارش روزانه',
+		warmestDay: 'گرم‌ترین روز',
+		coldestDay: 'سردترین روز',
 		
 		// Astronomy
 		sunMoon: '☀️ خورشید و ماه',
@@ -86,6 +110,11 @@ const translations = {
 	note: 'نکته',
 	solarSystemNote1: 'فواصل واقعی سیارات بسیار زیاد است. برای نمایش بهتر، از مقیاس فشرده استفاده شده است.',
 	solarSystemNote2: 'موقعیت سیارات با استفاده از الگوریتم‌های نجومی VSOP87 محاسبه شده و بر اساس تاریخ و ساعت انتخابی شما دقیق است.',
+	solarPickPlanet: 'یک سیاره را انتخاب کنید',
+	solarPickPlanetHint: 'روی یکی از سیاره‌ها بزنید تا جزئیات دقیق نمایش داده شود.',
+	solarCoords: 'مختصات (AU)',
+	abovePlane: 'بالای صفحهٔ مداری',
+	belowPlane: 'پایین صفحهٔ مداری',
 	
 	// Planets
 	mercury: 'عطارد',
@@ -170,6 +199,7 @@ const translations = {
 		loadingLocation: 'در حال دریافت اطلاعات موقعیت...',
 		loadingYourLocation: 'در حال گرفتن اطلاعات موقعیت شما',
 		loadingCityInfo: 'در حال دریافت اطلاعات شهر مورد نظر',
+		loadingModel: 'در حال تغییر مدل پیش‌بینی...',
 		slowConnection: 'اتصال اینترنت ضعیف است',
 		noHistoricalData: 'داده‌های تاریخی برای این دوره در دسترس نیست',
 		noData: 'داده‌ای موجود نیست',
@@ -260,6 +290,28 @@ en: {
 		useLocation: '📍 Use My Location',
 		unitC: '°C',
 		unitF: '°F',
+		forecastModel: 'Forecast model',
+		modelBest: 'Best match',
+		modelECMWF: 'ECMWF',
+		modelGFS: 'GFS',
+		modelICON: 'ICON',
+		navCities: 'Cities',
+		navNow: 'Now',
+		navHourly: 'Hourly',
+		navDaily: 'Daily',
+		navMap: 'Map',
+		navHistory: 'History',
+		navAstronomy: 'Astronomy',
+		navSolarSystem: 'Solar system',
+		radarMap: '🗺️ Radar & Map',
+		radarPlay: 'Play',
+		radarStop: 'Stop',
+		radarAttribution: 'Radar: RainViewer • Map: OpenStreetMap',
+		mapUnavailable: 'Map failed to load.',
+		dataSource: 'Source',
+		dataModel: 'Model',
+		dataElevation: 'Elevation',
+		dataCoords: 'Coords',
 		
 		// Cities
 		savedCities: 'Saved Cities',
@@ -302,6 +354,8 @@ en: {
 		avgMax: 'Average Maximum',
 		avgMin: 'Average Minimum',
 		maxDaily: 'Max Daily Precipitation',
+		warmestDay: 'Warmest Day',
+		coldestDay: 'Coldest Day',
 		
 		// Astronomy
 		sunMoon: '☀️ Sun & Moon',
@@ -339,6 +393,11 @@ en: {
 	note: 'Note',
 	solarSystemNote1: 'Actual distances between planets are very large. A compressed scale is used for better display.',
 	solarSystemNote2: 'Planet positions are calculated using VSOP87 astronomical algorithms and are accurate based on your selected date and time.',
+	solarPickPlanet: 'Select a planet',
+	solarPickPlanetHint: 'Click a planet to see detailed position info.',
+	solarCoords: 'Coordinates (AU)',
+	abovePlane: 'Above orbital plane',
+	belowPlane: 'Below orbital plane',
 	
 	// Planets
 	mercury: 'Mercury',
@@ -423,6 +482,7 @@ en: {
 		loadingLocation: 'Getting location information...',
 		loadingYourLocation: 'Getting your location information',
 		loadingCityInfo: 'Getting information for selected city',
+		loadingModel: 'Updating forecast model...',
 		slowConnection: 'Slow internet connection',
 		noHistoricalData: 'Historical data not available for this period',
 		noData: 'No data available',
@@ -683,4 +743,3 @@ function updateStaticElements() {
 	if (pm12Label) pm12Label.textContent = t('pm12');
 	if (pm3Label) pm3Label.textContent = t('pm3');
 }
-

@@ -1,0 +1,443 @@
+:root {
+	--radius-pill: 999px;
+	--shadow-elev: 0 18px 60px rgba(0,0,0,0.55);
+	--shadow-soft: 0 10px 30px rgba(0,0,0,0.28);
+	--glass: rgba(255,255,255,0.06);
+	--glass-2: rgba(255,255,255,0.09);
+	--ring: rgba(124,211,255,0.18);
+	--sticky-offset: 160px;
+}
+
+/* Allow page scroll even when theme sets overflow:hidden */
+html, body {
+	overflow-y: auto !important;
+	overflow-x: hidden !important;
+	height: auto !important;
+}
+
+body {
+	min-height: 100vh !important;
+	overflow-y: auto !important;
+	overscroll-behavior-y: auto !important;
+}
+
+body.theme-default,
+body.theme-sunny-day,
+body.theme-partly-cloudy,
+body.theme-cloudy,
+body.theme-rainy,
+body.theme-thunderstorm,
+body.theme-snowy,
+body.theme-night {
+	overflow: auto !important;
+	overflow-x: hidden !important;
+}
+
+/* Accessibility helpers */
+.sr-only {
+	position: absolute !important;
+	width: 1px !important;
+	height: 1px !important;
+	padding: 0 !important;
+	margin: -1px !important;
+	overflow: hidden !important;
+	clip: rect(0, 0, 0, 0) !important;
+	white-space: nowrap !important;
+	border: 0 !important;
+}
+
+/* Header: add premium section nav row */
+.app-header {
+	border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.section-nav {
+	grid-column: 1 / -1;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	overflow-x: auto;
+	padding: 6px 2px 12px;
+	margin-top: -8px;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+.section-nav::-webkit-scrollbar { display: none; }
+
+.section-link {
+	flex: 0 0 auto;
+	text-decoration: none;
+	color: var(--text);
+	font-weight: 700;
+	font-size: 12px;
+	letter-spacing: -0.2px;
+	padding: 8px 12px;
+	border-radius: var(--radius-pill);
+	border: 1px solid rgba(255,255,255,0.10);
+	background: rgba(255,255,255,0.05);
+	backdrop-filter: blur(18px);
+	opacity: 0.9;
+	transition: background .15s ease, border-color .15s ease, transform .05s ease, opacity .15s ease;
+	scroll-snap-align: start;
+}
+.section-link:hover { border-color: rgba(124,211,255,0.55); opacity: 1; }
+.section-link:active { transform: translateY(1px); }
+.section-link:focus-visible {
+	outline: none;
+	border-color: rgba(124,211,255,0.75);
+	box-shadow: 0 0 0 4px var(--ring);
+	opacity: 1;
+}
+.section-link.active {
+	background: rgba(124,211,255,0.18);
+	border-color: rgba(124,211,255,0.60);
+	box-shadow: 0 0 0 4px var(--ring);
+	opacity: 1;
+}
+
+/* Model select styling (matches buttons) */
+.model-select { display: inline-flex; align-items: center; }
+.select {
+	appearance: none;
+	-webkit-appearance: none;
+	-moz-appearance: none;
+	background: var(--card);
+	backdrop-filter: blur(20px);
+	border: 1px solid var(--border);
+	color: var(--text);
+	padding: 8px 36px 8px 12px;
+	border-radius: 12px;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1.2;
+	transition: border-color .15s ease, box-shadow .15s ease, transform .05s ease;
+	background-image:
+		linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.55) 50%),
+		linear-gradient(135deg, rgba(255,255,255,0.55) 50%, transparent 50%);
+	background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+	background-size: 5px 5px, 5px 5px;
+	background-repeat: no-repeat;
+}
+.select:hover { border-color: rgba(124,211,255,0.55); }
+.select:active { transform: translateY(1px); }
+.select:focus { outline: none; border-color: rgba(124,211,255,0.75); box-shadow: 0 0 0 4px var(--ring); }
+
+/* Improve scannability for meta line */
+.data-meta {
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.4;
+	letter-spacing: 0.2px;
+}
+
+/* Anchor offsets for sticky header */
+.app-main > section { scroll-margin-top: var(--sticky-offset); }
+
+/* Desktop: turn the page into a dashboard */
+@media (min-width: 1100px) {
+	.app-main {
+		grid-template-columns: minmax(560px, 1.35fr) minmax(360px, 0.65fr);
+		grid-template-areas:
+			"cities cities"
+			"current current"
+			"hourly hourly"
+			"stats stats"
+			"daily daily"
+			"map map"
+			"history tempHistory"
+			"astronomy astronomy"
+			"solar solar";
+		align-items: start;
+	}
+	#cities { grid-area: cities; }
+	#current { grid-area: current; }
+	#hourly { grid-area: hourly; }
+	#stats { grid-area: stats; }
+	#daily { grid-area: daily; }
+	#map { grid-area: map; }
+	#history { grid-area: history; }
+	#tempHistory { grid-area: tempHistory; }
+	#astronomy { grid-area: astronomy; }
+	#solarSystemSection { grid-area: solar; }
+}
+
+/* Make cards feel more “premium” without breaking existing themes */
+.card {
+	box-shadow: var(--shadow-soft);
+	background-image:
+		radial-gradient(900px 140px at 20% 0%, rgba(124,211,255,0.12), transparent 65%),
+		radial-gradient(700px 120px at 85% 10%, rgba(155,224,112,0.08), transparent 60%);
+}
+
+/* Map */
+.map-card .section-header { margin-bottom: 12px; }
+.map-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.map-controls input[type="range"] { width: min(260px, 40vw); accent-color: var(--accent); }
+.radar-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 84px; text-align: center; }
+.wx-map {
+	height: clamp(320px, 46vh, 520px);
+	border-radius: 16px;
+	border: 1px solid rgba(255,255,255,0.12);
+	overflow: hidden;
+	background: rgba(0,0,0,0.18);
+	box-shadow: var(--shadow-elev);
+}
+.map-attrib {
+	margin-top: 10px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+/* Leaflet dark polish */
+.leaflet-container {
+	background: rgba(10,14,20,1);
+	font-family: "Vazirmatn", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+/* Make radar overlay more visible */
+.wx-radar-layer {
+	filter: saturate(1.4) contrast(1.15);
+	mix-blend-mode: multiply;
+}
+.leaflet-control-zoom a,
+.leaflet-control-layers-toggle {
+	background: rgba(10,14,20,0.72) !important;
+	color: var(--text) !important;
+	border: 1px solid rgba(255,255,255,0.14) !important;
+	backdrop-filter: blur(18px);
+}
+.leaflet-control-zoom a:hover { border-color: rgba(124,211,255,0.55) !important; }
+.leaflet-bar { box-shadow: none !important; }
+.leaflet-control-attribution {
+	background: rgba(10,14,20,0.55) !important;
+	color: rgba(233,237,243,0.72) !important;
+	border-radius: 10px;
+	border: 1px solid rgba(255,255,255,0.10);
+	backdrop-filter: blur(18px);
+}
+.leaflet-control-attribution a { color: rgba(124,211,255,0.95) !important; }
+
+/* Reduced motion: keep the dashboard calm */
+@media (prefers-reduced-motion: reduce) {
+	.section-link,
+	.select,
+	.button,
+	.unit,
+	.lang-btn {
+		transition: none !important;
+	}
+	.section-link.active { box-shadow: none; }
+}
+
+/* Solar system redesign */
+#solarSystemSection.solar-system-card {
+	display: grid;
+	gap: 14px;
+	grid-template-areas:
+		"head head"
+		"zoom zoom"
+		"view info"
+		"legend legend"
+		"note note";
+	grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.55fr);
+	align-items: start;
+}
+#solarSystemSection .solar-system-header { grid-area: head; }
+#solarSystemSection .zoom-controls { grid-area: zoom; justify-content: flex-start; margin: 0; }
+#solarSystemSection #solarSystem { grid-area: view; }
+#solarSystemSection #planetInfoBox { grid-area: info; }
+#solarSystemSection .planet-legend { grid-area: legend; }
+#solarSystemSection .accuracy-note { grid-area: note; }
+
+@media (max-width: 980px) {
+	#solarSystemSection.solar-system-card {
+		grid-template-areas:
+			"head"
+			"zoom"
+			"view"
+			"info"
+			"legend"
+			"note";
+		grid-template-columns: 1fr;
+	}
+	#solarSystemSection .zoom-controls { justify-content: center; }
+}
+
+#solarSystemSection .solar-system-header {
+	padding-bottom: 10px;
+	border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+#solarSystemSection .solar-system-header h3 {
+	letter-spacing: -0.2px;
+}
+
+#solarSystemSection .time-controls {
+	background: rgba(255,255,255,0.04);
+	border: 1px solid rgba(255,255,255,0.10);
+	border-radius: 14px;
+	padding: 10px 12px;
+	backdrop-filter: blur(18px);
+}
+
+#solarSystemSection .zoom-controls {
+	background: rgba(255,255,255,0.035);
+	border-color: rgba(255,255,255,0.10);
+	backdrop-filter: blur(18px);
+}
+
+#solarSystemSection .solar-system-3d {
+	height: clamp(420px, 60vh, 740px);
+	max-width: none;
+	border-radius: 18px;
+	border: 1px solid rgba(255,255,255,0.14);
+	overflow: hidden;
+	background:
+		radial-gradient(900px 540px at 50% 50%, rgba(255,204,51,0.12), transparent 62%),
+		radial-gradient(700px 420px at 22% 30%, rgba(124,211,255,0.10), transparent 58%),
+		radial-gradient(900px 520px at 80% 70%, rgba(155,224,112,0.06), transparent 60%),
+		linear-gradient(180deg, rgba(5,9,16,0.78), rgba(5,9,16,0.35));
+	box-shadow: var(--shadow-elev);
+}
+#solarSystemSection .solar-system-3d::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background-image:
+		radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,0.85), transparent 55%),
+		radial-gradient(1px 1px at 22% 72%, rgba(255,255,255,0.75), transparent 55%),
+		radial-gradient(1px 1px at 35% 35%, rgba(255,255,255,0.70), transparent 55%),
+		radial-gradient(1px 1px at 44% 66%, rgba(255,255,255,0.80), transparent 55%),
+		radial-gradient(1px 1px at 58% 22%, rgba(255,255,255,0.75), transparent 55%),
+		radial-gradient(1px 1px at 66% 55%, rgba(255,255,255,0.65), transparent 55%),
+		radial-gradient(1px 1px at 74% 30%, rgba(255,255,255,0.80), transparent 55%),
+		radial-gradient(1px 1px at 86% 62%, rgba(255,255,255,0.70), transparent 55%),
+		radial-gradient(1px 1px at 92% 22%, rgba(255,255,255,0.60), transparent 55%);
+	opacity: 0.65;
+	pointer-events: none;
+}
+
+#solarSystemSection .planet-orbit {
+	border-color: rgba(255,255,255,0.10);
+}
+
+#solarSystemSection .planet {
+	cursor: pointer;
+	transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+}
+#solarSystemSection .planet:hover {
+	transform: scale(1.07);
+	filter: brightness(1.08);
+}
+#solarSystemSection .planet:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 4px rgba(124,211,255,0.22), 0 10px 25px rgba(0,0,0,0.55);
+}
+#solarSystemSection .planet.selected {
+	transform: scale(1.12);
+	box-shadow: 0 0 0 5px rgba(124,211,255,0.20), 0 0 22px rgba(124,211,255,0.35), 0 12px 30px rgba(0,0,0,0.62);
+}
+
+#solarSystemSection .solar-date-label {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 6px 12px;
+	border-radius: var(--radius-pill);
+	background: rgba(10,14,20,0.62);
+	border: 1px solid rgba(255,255,255,0.14);
+	color: rgba(233,237,243,0.88);
+	font-size: 12px;
+	font-weight: 700;
+	letter-spacing: 0.2px;
+	backdrop-filter: blur(16px);
+	box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+	z-index: 30;
+	pointer-events: none;
+	user-select: none;
+}
+
+#solarSystemSection .planet-info-box {
+	margin-top: 0;
+	text-align: start;
+	background: rgba(255,255,255,0.05);
+	border: 1px solid rgba(124,211,255,0.22);
+	border-radius: 16px;
+	padding: 14px;
+	box-shadow: 0 14px 45px rgba(0,0,0,0.22);
+	backdrop-filter: blur(22px);
+}
+
+#solarSystemSection .planet-info-head {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding-bottom: 10px;
+	margin-bottom: 10px;
+	border-bottom: 1px solid rgba(255,255,255,0.10);
+}
+#solarSystemSection .planet-info-title {
+	font-size: 16px;
+	font-weight: 800;
+	letter-spacing: -0.2px;
+	color: var(--text);
+}
+#solarSystemSection .planet-info-sub {
+	font-size: 12px;
+	color: rgba(233,237,243,0.70);
+	font-variant-numeric: tabular-nums;
+}
+#solarSystemSection .planet-info-grid {
+	display: grid;
+	gap: 10px;
+}
+#solarSystemSection .pi-item {
+	padding: 12px;
+	border-radius: 14px;
+	background: rgba(0,0,0,0.18);
+	border: 1px solid rgba(255,255,255,0.10);
+}
+#solarSystemSection .pi-k {
+	font-size: 11px;
+	font-weight: 800;
+	color: rgba(233,237,243,0.72);
+}
+#solarSystemSection .pi-v {
+	margin-top: 4px;
+	font-size: 14px;
+	font-weight: 800;
+	color: var(--text);
+	font-variant-numeric: tabular-nums;
+}
+#solarSystemSection .pi-s {
+	margin-top: 6px;
+	font-size: 11px;
+	color: rgba(233,237,243,0.66);
+	line-height: 1.5;
+}
+#solarSystemSection .planet-info-foot {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid rgba(255,255,255,0.10);
+	font-size: 11px;
+	color: rgba(233,237,243,0.68);
+	line-height: 1.7;
+}
+
+#solarSystemSection .planet-legend {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: none;
+	justify-content: flex-start;
+	gap: 10px;
+}
+#solarSystemSection .legend-item {
+	padding: 8px 10px;
+	border-radius: 12px;
+	border: 1px solid rgba(255,255,255,0.10);
+	background: rgba(255,255,255,0.04);
+}
+#solarSystemSection .legend-color {
+	box-shadow: 0 0 0 2px rgba(0,0,0,0.25), 0 0 10px rgba(0,0,0,0.25);
+}
