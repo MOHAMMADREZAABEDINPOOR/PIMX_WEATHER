@@ -23,7 +23,7 @@
 [![HTML5 Canvas](https://img.shields.io/badge/Graphics-HTML5_Canvas_60FPS-E34F26?style=for-the-badge&logo=html5&logoColor=white)](https://html.spec.whatwg.org/)
 [![CSS Grid & Flexbox](https://img.shields.io/badge/Styling-Modern_Glassmorphism-1572B6?style=for-the-badge&logo=css3&logoColor=white)](https://www.w3.org/Style/CSS/)
 [![Bilingual: EN / FA](https://img.shields.io/badge/Localization-English_%26_Persian-008080?style=for-the-badge)](https://github.com/MOHAMMADREZAABEDINPOOR/PIMX_WEATHER)
-[![Read in Persian](https://img.shields.io/badge/مطالعه_به_فارسی-Persian_README-008080?style=for-the-badge)](#-بخش-فوقالعاده-مفصل-و-جامع-به-زبان-فارسی-persian-documentation)
+[![Read in Persian](https://img.shields.io/badge/مطالعه_به_فارسی-Persian_README-008080?style=for-the-badge)](#persian-documentation)
 
 <p align="center">
   <b>PIMX_WEATHER</b> is an advanced, zero-dependency atmospheric and astrophysics web application engineered in pure Vanilla JavaScript. Harmonizing multi-model numerical weather forecasts (ECMWF, GFS, ICON) with genuine celestial mechanics (VSOP87 planetary trajectories, solar azimuth and elevation arcs, and lunar phase illumination algorithms), PIMX_WEATHER delivers scientific precision with an artistic, responsive glassmorphic interface.
@@ -38,7 +38,7 @@
 [Forecast Models](#-multi-model-meteorological-engines) •
 [In-Depth Features](#-in-depth-functional-capabilities) •
 [Quick Start](#-quick-start--local-execution) •
-[توضیحات فارسی](#-بخش-فوقالعاده-مفصل-و-جامع-به-زبان-فارسی-persian-documentation) •
+[توضیحات فارسی](#persian-documentation) •
 [Roadmap](#-strategic-engineering-roadmap) •
 [License](#-license--open-source-attribution)
 
@@ -168,7 +168,8 @@ npx serve .
 
 ---
 
-## 🇮🇷 بخش فوق‌العاده مفصل و جامع به زبان فارسی (Persian Documentation)
+## Persian Documentation
+### 🇮🇷 مستندات فوق‌العاده مفصل، جامع و فنی به زبان فارسی
 
 ### ۱. مقدمه و چرایی توسعه پروژه PIMX_WEATHER
 پروژه **PIMX_WEATHER** یک شاهکار مهندسی وب در حوزه هواشناسی، اخترشناسی محاسباتی و فیزیک جو است که به زبان **جاوااسکریپت خالص (Vanilla JS)** و بدون اتکا به هیچ‌گونه فریم‌ورک سنگین (مانند ری‌اکت یا ویو) توسعه یافته است.
@@ -219,7 +220,7 @@ Distributed under the **MIT License**. Free for educational, scientific, commerc
 <!-- ============================================================================== -->
 <!-- ANIMATED CAPSULE FOOTER                                                        -->
 <!-- ============================================================================== -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=1,12,24,30&height=120&section=footer" alt="Footer" width="100%" />
+<img src="./assets/footer.svg" alt="PIMX_WEATHER 3D Footer" width="100%" />
 
 <sub>Architected with dedication and astronomical passion by <a href="https://github.com/MOHAMMADREZAABEDINPOOR"><b>MOHAMMADREZA ABEDINPOOR</b></a>. If PIMX_WEATHER illuminates your horizons, please leave a ⭐!</sub>
 
