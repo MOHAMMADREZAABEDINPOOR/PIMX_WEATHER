@@ -8,6 +8,12 @@
 
 # 🌤️ PIMX WEATHER
 
+<!-- pimx-live-site:start -->
+## Live website
+
+**[Open PIMX_WEATHER ↗](https://pimx-weather.pages.dev/)**
+<!-- pimx-live-site:end -->
+
 A vanilla JavaScript weather dashboard with forecast views, localization, animated styling and astronomical/solar visualizations.
 
 [GitHub](https://github.com/MOHAMMADREZAABEDINPOOR/PIMX_WEATHER) · [PIMX / Profile](https://github.com/MOHAMMADREZAABEDINPOOR) · [Static artwork](assets/readme/hero.png)
