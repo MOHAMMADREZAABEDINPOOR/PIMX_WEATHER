@@ -1,0 +1,144 @@
+/* Components adapt to their available space, including narrow phones. */
+.app-shell, main, .dashboard > *, .panel-heading > *, .section-heading > *,
+.page-heading > *, .hero-top > *, .hero-bottom > *, .celestial-header > *,
+.moon-info, .aqi-description, .history-stat, .data-strip > * {
+  min-width: 0;
+}
+.panel-heading { flex-wrap: wrap; align-items: flex-start; }
+.panel-heading > div:first-child { flex: 1 1 180px; }
+.panel-heading > h2 { flex: 1 1 120px; }
+.panel-heading h2 span { min-width: 0; }
+.section-heading, .heading-controls, .quick-cities, .hero-top, .hero-bottom,
+.footer, .footer > div, .chart-legend { flex-wrap: wrap; }
+.quick-cities { row-gap: 6px; }
+.history-panel select { max-width: 100%; }
+.metric-top { align-items: flex-start; line-height: 1.6; }
+.metric-value, .metric-note, .celestial-detail strong, .celestial-status,
+.planet-info-grid strong, .astro-row strong, .history-stat strong,
+.source-item p, .source-summary, .source-item a { overflow-wrap: anywhere; }
+.astro-row { gap: 12px; }
+.astro-row > span { min-width: 0; }
+.astro-row strong { text-align: end; }
+.map-controls { flex-wrap: wrap; }
+.map-controls .muted { white-space: normal; }
+.chart-tooltip { max-width: 100%; white-space: normal; text-align: center; }
+.source-dialog { overflow-y: auto; }
+
+/* Seven spacious columns on large panels; fewer columns as the panel shrinks. */
+.forecast-panel { container: forecast / inline-size; }
+.forecast-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; }
+.forecast-day { min-width: 0; padding: 15px 10px; }
+.forecast-day .day-name { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.forecast-day .day-date { font-size: 10px; }
+.forecast-day > .icon { width: 30px; height: 30px; margin: 16px 0 12px; }
+.day-temperatures { flex-wrap: wrap; gap: 4px 7px; font-size: 20px; line-height: 1.4; }
+.day-temperatures span { font-size: 13px; }
+.day-rain { gap: 6px; margin-top: 13px; font-size: 10px; line-height: 1.6; }
+.forecast-day .day-rain .icon { width: 13px; height: 13px; margin: 0; }
+.forecast-note { align-items: flex-start; line-height: 1.8; }
+.forecast-note::before { flex: 0 0 4px; margin-top: 6px; }
+.day-detail { display: block; padding-top: 18px; margin-top: 20px; }
+.day-summary { display: flex; align-items: center; gap: 11px; margin-bottom: 17px; }
+.day-summary-icon { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--panel)); color: var(--accent); }
+.day-summary-icon .icon { width: 23px; height: 23px; }
+.day-summary > div { min-width: 0; }
+.day-summary span:not(.day-summary-icon) { display: block; font-size: 9px; color: var(--muted); }
+.day-summary strong { display: block; font-size: 13px; margin-top: 3px; }
+.day-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 105px), 1fr)); gap: 12px; }
+.day-detail-item { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; background: var(--bg); }
+.day-detail-item span { display: block; font-size: 10px; color: var(--muted); line-height: 1.6; }
+.day-detail-item strong { display: block; color: var(--text); font-size: 13px; margin-top: 5px; overflow-wrap: anywhere; }
+@container forecast (max-width: 780px) {
+  .forecast-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container forecast (max-width: 520px) {
+  .forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container forecast (max-width: 340px) {
+  .forecast-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .sidebar { height: calc(61px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  main { padding-bottom: calc(85px + env(safe-area-inset-bottom, 0px)); }
+  .page-heading h1 { font-size: clamp(23px, 5.5vw, 30px); }
+  .panel-heading { gap: 13px; }
+  .day-navigation { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 8px; width: 100%; }
+  .day-navigation > div:not(.picker-wrapper) { text-align: center; }
+  .day-navigation strong { white-space: normal; line-height: 1.8; }
+  .day-navigation .icon-button { width: 44px; height: 44px; }
+  .day-navigation .picker-wrapper { grid-column: 1 / -1; width: 100%; margin: 0; }
+  .calendar-trigger { width: 100%; justify-content: flex-start; min-height: 42px; font-size: 11px; }
+  .calendar-trigger .picker-chevron { margin-inline-start: auto; }
+  .selected-time-controls { gap: 8px; }
+  .selected-time-controls input { min-width: 40px; }
+  .selected-time-controls .icon-button { width: 36px; height: 36px; flex: 0 0 36px; }
+  .selected-time-controls strong { flex: 0 0 40px; }
+  .forecast-model { min-width: 0; }
+  .forecast-model > span { min-width: 0; }
+  .forecast-model .picker-wrapper { min-width: 0; flex: 1; max-width: 180px; }
+  .forecast-model .model-trigger { min-width: 0; }
+  .hero-data-time { max-width: 100%; }
+  .hero-bottom > div { flex-wrap: wrap; row-gap: 4px; }
+  .metric-top { font-size: 10px; }
+  .metric-note { font-size: 10px; line-height: 1.7; }
+  .celestial-detail span { font-size: 11px; line-height: 1.7; }
+  .celestial-status { font-size: 10px; line-height: 1.8; }
+  .solar-help { line-height: 1.7; }
+  .data-strip-actions { justify-content: flex-start; }
+  .auto-refresh { font-size: 10px; }
+}
+@media (max-width: 600px) {
+  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics-grid .metric:last-child { grid-column: auto; }
+  .metric { padding: 14px; }
+  .metric-value { font-size: 23px; }
+  .metric-text { font-size: 14px; line-height: 2; }
+  .air-panel { display: flex; gap: 0; }
+  .air-content { display: block; }
+  .aqi-summary { gap: 16px; }
+  .aqi-ring { width: 82px; height: 82px; }
+  .aqi-description h3 { font-size: 15px; }
+  .air-pollutants { border-top: 1px solid var(--line); padding-top: 16px; margin-bottom: 16px; gap: 14px; }
+  .daylight-panel { display: block; }
+  .sun-arc { height: 160px; }
+  .sun-times { padding: 0 8px; }
+  .sun-times strong { font-size: 16px; }
+  .daylight-bottom { margin-top: 18px; padding-top: 14px; }
+  .daylight-bottom > .icon { display: inline-flex; }
+  .daylight-bottom .muted { font-size: 10px; }
+  .moon-display { gap: 18px; }
+  .moon-sphere { width: 80px; height: 80px; }
+}
+@media (min-width: 761px) and (max-width: 1000px) {
+  .metrics-grid .metric:last-child { grid-column: auto; }
+}
+@media (max-width: 420px) {
+  main { padding-inline: 12px; }
+  .topbar { padding-inline: 12px; }
+  .topbar-actions { gap: 5px; }
+  .breadcrumb { gap: 7px; }
+  .panel { padding: 16px; }
+  .heading-controls { gap: 8px; }
+  .heading-controls .button { padding-inline: 10px; }
+  .location-toolbar { padding: 10px; }
+  .quick-cities { gap: 4px; }
+  .quick-city { padding-inline: 6px; }
+  .forecast-day { padding-inline: 9px; }
+  .forecast-panel .panel-heading p { max-width: none; }
+  .forecast-panel .panel-heading > div:first-child { flex-basis: 100%; }
+  .solar-panel { padding: 16px; }
+  .solar-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; justify-items: center; }
+  .solar-tools #solarMotion { grid-column: 1 / -1; justify-self: start; font-size: 11px; }
+  .solar-tools #zoomLevel { align-self: center; }
+  .planet-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .planet-choice { padding: 10px 6px; font-size: 11px; }
+  .planet-choice small { font-size: 9px; }
+  .celestial-card { padding: 15px; }
+  .celestial-header { gap: 18px; }
+  .celestial-grid { gap: 0 12px; }
+  .celestial-detail strong { font-size: 13px; }
+  .sky-explorer .small-tag { max-width: none; }
+  .solar-stage-caption { font-size: 7px; }
+  .source-dialog { padding: 18px; }
+}

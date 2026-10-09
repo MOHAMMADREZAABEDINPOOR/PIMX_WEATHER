@@ -1,0 +1,21 @@
+{
+  "name": "pimx-weather-studio",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A bilingual weather dashboard with transparent live data sources.",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "check": "node --check app.js && node --check i18n.js && node --check weather-data.js && node --check astronomy-data.js && node --check date-model-controls.js && node --check solar-system.mjs",
+    "test:browser": "node tests/browser.cjs",
+    "test:pickers": "node tests/pickers.cjs",
+    "test:responsive": "node tests/responsive.cjs",
+    "build:solar": "esbuild solar-system.mjs --bundle --minify --format=esm --outfile=assets/solar-system.js",
+    "start": "python -m http.server 8000 --bind 127.0.0.1"
+  },
+  "devDependencies": {
+    "astronomy-engine": "^2.1.19",
+    "esbuild": "^0.28.2",
+    "playwright": "1.64.0",
+    "three": "^0.186.1"
+  }
+}

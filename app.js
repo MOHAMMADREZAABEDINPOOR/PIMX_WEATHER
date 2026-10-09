@@ -1,4417 +1,617 @@
-// Initialize i18n
-(async function initI18n() {
-	console.log('🌐 Initializing i18n...');
-	await setLanguageByLocation();
-	console.log('✅ Language set to:', currentLang);
-	applyTranslations();
-	console.log('✅ Translations applied');
-})();
-
-// Loading Screen
-window.addEventListener('load', () => {
-	const loadingScreen = document.getElementById('loadingScreen');
-	setTimeout(() => {
-		loadingScreen.classList.add('hidden');
-		setTimeout(() => {
-			loadingScreen.style.display = 'none';
-			// Show location permission modal after loading screen is hidden
-			// This will be handled in the initialization code below
-		}, 600);
-	}, 1500); // نمایش لودینگ حداقل 1.5 ثانیه
-});
-
-// App State
-const state = {
-	unit: localStorage.getItem('unit') || 'C',
-	model: localStorage.getItem('wxModel') || 'best_match',
-	place: null,
-	weather: null,
-	savedCities: JSON.parse(localStorage.getItem('savedCities') || '[]'),
-	activeCityIndex: parseInt(localStorage.getItem('activeCityIndex') || '0'),
-	historyData: null,
-	airQuality: null,
-	currentDayView: 7,
-	selectedDayIndex: 0, // 0 = امروز
-	solarSystemHour: null, // null = ساعت فعلی، در غیر این صورت ساعت دستی
-	solarSystemZoom: getDefaultZoom(), // مقیاس zoom (0.5 تا 2.0)
-};
-
-// تابع تعیین zoom پیش‌فرض بر اساس سایز صفحه
-function getDefaultZoom() {
-	const width = window.innerWidth;
-	if (width <= 460) return 0.5;      // موبایل خیلی کوچک
-	if (width <= 560) return 0.60;      // موبایل
-	if (width <= 767) return 0.75;      // تبلت کوچک
-	if (width <= 880) return 1.0;      // تبلت
-	return 1.2;                         // دسکتاپ
-}
-
-// Constants
-const OPEN_METEO = {
-	forecast: 'https://api.open-meteo.com/v1/forecast',
-	search: 'https://geocoding-api.open-meteo.com/v1/search',
-	reverse: 'https://geocoding-api.open-meteo.com/v1/reverse',
-	airQuality: 'https://air-quality-api.open-meteo.com/v1/air-quality',
-	archive: 'https://archive-api.open-meteo.com/v1/archive',
-};
-const IP_API = 'https://ipapi.co/json/';
-const MAX_CITIES = 20;
-
-// Elements
-const el = {
-	searchInput: document.getElementById('searchInput'),
-	suggestions: document.getElementById('suggestions'),
-	useLocation: document.getElementById('useLocation'),
-	unitC: document.getElementById('unitC'),
-	unitF: document.getElementById('unitF'),
-	cityTabs: document.getElementById('cityTabs'),
-	addCity: document.getElementById('addCity'),
-	placeName: document.getElementById('placeName'),
-	selectedDate: document.getElementById('selectedDate'),
-	prevDay: document.getElementById('prevDay'),
-	nextDay: document.getElementById('nextDay'),
-	updatedAt: document.getElementById('updatedAt'),
-	icon: document.getElementById('currentIcon'),
-	temp: document.getElementById('temp'),
-	condition: document.getElementById('condition'),
-	tempRange: document.getElementById('tempRange'),
-	feelsLike: document.getElementById('feelsLike'),
-	humidity: document.getElementById('humidity'),
-	wind: document.getElementById('wind'),
-	pressure: document.getElementById('pressure'),
-	visibility: document.getElementById('visibility'),
-	dewpoint: document.getElementById('dewpoint'),
-	precip: document.getElementById('precip'),
-	uvIndex: document.getElementById('uvIndex'),
-	aqi: document.getElementById('aqi'),
-	sunrise: document.getElementById('sunrise'),
-	sunset: document.getElementById('sunset'),
-	moonPhase: document.getElementById('moonPhase'),
-	hourlyList: document.getElementById('hourlyList'),
-	dailyList: document.getElementById('dailyList'),
-	toast: document.getElementById('toast'),
-	view7d: document.getElementById('view7d'),
-	view14d: document.getElementById('view14d'),
-	sunTrackRise: document.getElementById('sunTrackRise'),
-	sunTrackSet: document.getElementById('sunTrackSet'),
-	sunStatus: document.getElementById('sunStatus'),
-	moonTrackRise: document.getElementById('moonTrackRise'),
-	moonTrackSet: document.getElementById('moonTrackSet'),
-	moonStatus: document.getElementById('moonStatus'),
-	moonCanvas: document.getElementById('moonCanvas'),
-	moonPhaseNameBig: document.getElementById('moonPhaseNameBig'),
-	moonIllumination: document.getElementById('moonIllumination'),
-	solarSystem: document.getElementById('solarSystem'),
-	planetInfoBox: document.getElementById('planetInfoBox'),
-	precipChart: document.getElementById('precipChart'),
-	tempChart: document.getElementById('tempChart'),
-	historyStats: document.getElementById('historyStats'),
-	tempHistoryStats: document.getElementById('tempHistoryStats'),
-	localTime: document.getElementById('localTime'),
-	solarSystemHour: document.getElementById('solarSystemHour'),
-	solarSystemHourDisplay: document.getElementById('solarSystemHourDisplay'),
-	resetToNow: document.getElementById('resetToNow'),
-	zoomIn: document.getElementById('zoomIn'),
-	zoomOut: document.getElementById('zoomOut'),
-	zoomReset: document.getElementById('zoomReset'),
-	zoomLevel: document.getElementById('zoomLevel'),
-	sunAltitudeArc: document.getElementById('sunAltitudeArc'),
-	moonAltitudeArc: document.getElementById('moonAltitudeArc'),
-	loadingCard: document.getElementById('loadingCard'),
-	loadingCardMessage: document.getElementById('loadingCardMessage'),
-	loadingCardStatus: document.getElementById('loadingCardStatus'),
-	locationPermissionModal: document.getElementById('locationPermissionModal'),
-	locationPermissionAllow: document.getElementById('locationPermissionAllow'),
-	locationPermissionDeny: document.getElementById('locationPermissionDeny'),
-	modelSelect: document.getElementById('modelSelect'),
-	dataMeta: document.getElementById('dataMeta'),
-	radarPlay: document.getElementById('radarPlay'),
-	radarFrame: document.getElementById('radarFrame'),
-	radarTime: document.getElementById('radarTime'),
-	wxMap: document.getElementById('wxMap'),
-};
-
-let precipChartInstance = null;
-let tempChartInstance = null;
-let clockInterval = null;
-
-// Map / Radar
-let mapInstance = null;
-let radarLayer = null;
-let radarFrames = [];
-let radarHost = 'https://tilecache.rainviewer.com';
-let radarIndex = 0;
-let radarTimer = null;
-let lastMapCenterKey = null;
-let pendingMapCenter = null;
-
-// Solar System UI state
-let selectedPlanetKey = 'earth';
-
-// ========= STAT CARD ANIMATIONS =========
-function updateStatCard(elementId, value, barId = null, barPercent = 0) {
-	const valueEl = document.getElementById(elementId);
-	if (!valueEl) return;
-	
-	valueEl.textContent = value;
-	
-	if (barId) {
-		const barEl = document.getElementById(barId);
-		if (barEl) {
-			// Reset animation
-			barEl.style.width = '0%';
-			setTimeout(() => {
-				barEl.style.width = `${Math.min(Math.max(barPercent, 0), 100)}%`;
-			}, 50);
-		}
-	}
-}
-
-function normalizeTemp(temp) {
-	// Normalize temperature to 0-100% (assuming -20°C to 50°C range)
-	if (temp == null) return 0;
-	return Math.min(Math.max(((temp + 20) / 70) * 100, 0), 100);
-}
-
-function normalizePressure(pressure) {
-	// Normalize pressure to 0-100% (assuming 950-1050 hPa range)
-	if (pressure == null) return 50;
-	return Math.min(Math.max(((pressure - 950) / 100) * 100, 0), 100);
-}
-
-function normalizeVisibility(visibility) {
-	// Normalize visibility to 0-100% (assuming 0-20 km range)
-	if (visibility == null) return 0;
-	const visKm = visibility / 1000;
-	return Math.min(Math.max((visKm / 20) * 100, 0), 100);
-}
-
-// ========= LIVE CLOCK =========
-function startLiveClock(timezone) {
-	// پاک کردن اینتروال قبلی
-	if (clockInterval) {
-		clearInterval(clockInterval);
-	}
-	
-	// تابع برای به‌روزرسانی ساعت
-	function updateClock() {
-		try {
-			const now = new Date();
-			const localTime = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
-			
-			const hours = localTime.getHours().toString().padStart(2, '0');
-			const minutes = localTime.getMinutes().toString().padStart(2, '0');
-			const seconds = localTime.getSeconds().toString().padStart(2, '0');
-			
-			const timeStr = `${hours}:${minutes}:${seconds}`;
-			
-			// نمایش بر اساس زبان فعلی
-			if (currentLang === 'fa') {
-				const persianTime = timeStr.replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
-			el.localTime.textContent = persianTime;
-			} else {
-				el.localTime.textContent = timeStr;
-			}
-		} catch (e) {
-			console.error('❌ Clock error:', e);
-			el.localTime.textContent = '—';
-		}
-	}
-	
-	// اجرای فوری و سپس هر ثانیه
-	updateClock();
-	clockInterval = setInterval(updateClock, 1000);
-}
-
-// Utilities
-const debounce = (fn, ms = 250) => {
-	let t;
-	return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-};
-
-// Format number based on current language
-// تبدیل جهت باد از درجه به نام جهت کامل به فارسی
-function getWindDirection(deg) {
-	if (deg == null || isNaN(deg)) return null;
-	
-	// نرمال‌سازی درجه به 0-360
-	const normalized = Math.round(((deg % 360) + 360) % 360);
-	
-	// تقسیم‌بندی 360 درجه به 8 جهت اصلی
-	const directions = [
-		{ name: 'شمال', en: 'N' },
-		{ name: 'شمال شرقی', en: 'NE' },
-		{ name: 'شرق', en: 'E' },
-		{ name: 'جنوب شرقی', en: 'SE' },
-		{ name: 'جنوب', en: 'S' },
-		{ name: 'جنوب غربی', en: 'SW' },
-		{ name: 'غرب', en: 'W' },
-		{ name: 'شمال غربی', en: 'NW' }
-	];
-	const index = Math.round(normalized / 45) % 8;
-	
-	return {
-		name: currentLang === 'fa' ? directions[index].name : directions[index].en,
-		deg: normalized
-	};
-}
-
-const formatNumber = (v) => {
-	if (v == null) return '—';
-	if (currentLang === 'fa') {
-		return typeof v === 'number' ? v.toLocaleString('fa-IR') : String(v).replace(/[0-9]/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
-	} else {
-		return typeof v === 'number' ? v.toLocaleString('en-US') : String(v);
-	}
-};
-
-const toFa = (v) => v == null ? '—' : (typeof v === 'number' ? v.toLocaleString('fa-IR') : String(v).replace(/[0-9]/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]));
-const msToKmh = (ms) => Math.round(ms * 3.6);
-const cToF = (c) => Math.round(c * 9/5 + 32);
-const fmtTemp = (c) => c == null ? '—' : (state.unit === 'C' ? `${formatNumber(Math.round(c))}°` : `${formatNumber(cToF(c))}°`);
-const fmtPercent = (n) => n == null ? '—' : `${formatNumber(Math.round(n))}%`;
-const fmtMm = (n) => n == null ? '—' : `${formatNumber(Math.round(n))} mm`;
-const fmtKm = (n) => n == null ? '—' : `${formatNumber(Math.round(n/1000))} km`;
-const fmthPa = (n) => n == null ? '—' : `${formatNumber(Math.round(n))} hPa`;
-const tzDate = (iso, tz) => new Date(new Date(iso).toLocaleString('en-US', { timeZone: tz }));
-const fmtTime = (iso, tz) => {
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	const hour12 = currentLang !== 'fa'; // Use 12-hour for English, 24-hour for Persian
-	// استفاده مستقیم از Date object برای زمان دقیق
-	const date = new Date(iso);
-	return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12, timeZone: tz });
-};
-const fmtDayName = (iso, tz) => {
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	return tzDate(iso, tz).toLocaleDateString(locale, { weekday: 'long' });
-};
-const fmtDateShort = (iso, tz) => {
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	return tzDate(iso, tz).toLocaleDateString(locale, { month: 'short', day: 'numeric' });
-};
-const fmtDateLong = (iso, tz) => {
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	return tzDate(iso, tz).toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
-};
-
-function shouldRunBackgroundAnimations() {
-	const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-	const saveData = navigator.connection?.saveData;
-	return !reducedMotion && !saveData;
-}
-
-function showToast(msg, timeout = 3000) {
-	el.toast.textContent = msg;
-	el.toast.classList.add('show');
-	setTimeout(() => el.toast.classList.remove('show'), timeout);
-}
-
-// Section navigation (scroll-spy)
-function initSectionNav() {
-	const links = Array.from(document.querySelectorAll('.section-nav .section-link'));
-	if (links.length === 0) return;
-
-	const sectionIds = links
-		.map(a => (a.getAttribute('href') || '').trim())
-		.filter(href => href.startsWith('#'))
-		.map(href => href.slice(1));
-
-	const sections = sectionIds
-		.map(id => document.getElementById(id))
-		.filter(Boolean);
-
-	const setActive = (id) => {
-		links.forEach(a => a.classList.toggle('active', (a.getAttribute('href') || '') === `#${id}`));
-	};
-
-	links.forEach(a => {
-		const href = (a.getAttribute('href') || '').trim();
-		if (!href.startsWith('#')) return;
-		const id = href.slice(1);
-		a.addEventListener('click', () => setActive(id));
-	});
-
-	if (!('IntersectionObserver' in window) || sections.length === 0) return;
-	const observer = new IntersectionObserver((entries) => {
-		const visible = entries
-			.filter(e => e.isIntersecting)
-			.sort((a, b) => (b.intersectionRatio || 0) - (a.intersectionRatio || 0))[0];
-		if (!visible) return;
-		setActive(visible.target.id);
-	}, {
-		root: null,
-		rootMargin: '-35% 0px -55% 0px',
-		threshold: [0.01, 0.05, 0.1, 0.2, 0.35, 0.5],
-	});
-
-	sections.forEach(s => observer.observe(s));
-}
-
-function getForecastModelLabel(model) {
-	switch (model) {
-		case 'best_match':
-			return t('modelBest');
-		case 'ecmwf_ifs04':
-			return t('modelECMWF');
-		case 'gfs_global':
-			return t('modelGFS');
-		case 'icon_global':
-			return t('modelICON');
-		default:
-			return model || '';
-	}
-}
-
-function updateDataMeta() {
-	if (!el.dataMeta) return;
-
-	const parts = [];
-	parts.push(`${t('dataSource')}: Open‑Meteo`);
-
-	const modelLabel = getForecastModelLabel(state.model);
-	if (modelLabel) parts.push(`${t('dataModel')}: ${modelLabel}`);
-
-	if (state.weather?.elevation != null) {
-		const elevation = formatNumber(Math.round(state.weather.elevation));
-		parts.push(`${t('dataElevation')}: ${elevation} m`);
-	}
-
-	if (state.place?.lat != null && state.place?.lon != null) {
-		const sep = currentLang === 'fa' ? '، ' : ', ';
-		const lat = formatNumber(Number(state.place.lat.toFixed(2)));
-		const lon = formatNumber(Number(state.place.lon.toFixed(2)));
-		parts.push(`${t('dataCoords')}: ${lat}${sep}${lon}`);
-	}
-
-	el.dataMeta.textContent = parts.join(' • ');
-}
-
-function getForecastHourStartMs() {
-	const offsetMs = (state.weather?.utcOffsetSeconds || 0) * 1000;
-	const localMs = Date.now() + offsetMs;
-	return Math.floor(localMs / 3600000) * 3600000 - offsetMs;
-}
-
-// Map + radar (lazy-init)
-function setupMapLazyInit() {
-	const mapSection = document.getElementById('map');
-	if (!mapSection || !el.wxMap) return;
-
-	const start = () => {
-		initMap();
-		// Ensure view sync after init (if place was loaded earlier)
-		syncMapToPlace();
-	};
-
-	if (!('IntersectionObserver' in window)) {
-		start();
-		return;
-	}
-
-	const observer = new IntersectionObserver((entries) => {
-		if (!entries.some(e => e.isIntersecting)) return;
-		observer.disconnect();
-		start();
-	}, { rootMargin: '320px 0px' });
-
-	observer.observe(mapSection);
-}
-
-function initMap() {
-	if (!el.wxMap || mapInstance) return;
-
-	if (typeof L === 'undefined') {
-		el.wxMap.innerHTML = `<div style="padding:16px;color:var(--muted);text-align:center">${t('mapUnavailable') || 'Map failed to load.'}</div>`;
-		return;
-	}
-
-	mapInstance = L.map(el.wxMap, {
-		zoomControl: false,
-		attributionControl: true,
-		scrollWheelZoom: false,
-		tap: true,
-	});
-	L.control.zoom({ position: 'topright' }).addTo(mapInstance);
-
-	L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-		maxZoom: 19,
-		attribution: '&copy; OpenStreetMap contributors',
-	}).addTo(mapInstance);
-
-	// Radar pane above base tiles
-	const radarPane = mapInstance.createPane('radarPane');
-	radarPane.style.zIndex = '450';
-	radarPane.style.pointerEvents = 'none';
-
-	const initialCenter = pendingMapCenter || (state.place?.lat && state.place?.lon ? { lat: state.place.lat, lon: state.place.lon } : null);
-	if (initialCenter) {
-		pendingMapCenter = null;
-		lastMapCenterKey = `${initialCenter.lat.toFixed(4)},${initialCenter.lon.toFixed(4)}`;
-		mapInstance.setView([initialCenter.lat, initialCenter.lon], 7);
-	} else {
-		mapInstance.setView([35.6892, 51.3890], 6);
-	}
-
-	// Controls
-	if (el.radarFrame) {
-		el.radarFrame.addEventListener('input', () => setRadarFrame(Number(el.radarFrame.value)));
-	}
-	if (el.radarPlay) {
-		el.radarPlay.addEventListener('click', () => toggleRadarPlayback());
-	}
-
-	// Load frames
-	loadRadarFrames();
-
-	// Fix sizing on first paint
-	setTimeout(() => mapInstance?.invalidateSize(), 250);
-}
-
-async function loadRadarFrames() {
-	try {
-		const data = await fetchJson('https://api.rainviewer.com/public/weather-maps.json');
-		radarHost = data.host || radarHost;
-		const frames = [...(data.radar?.past || []), ...(data.radar?.nowcast || [])]
-			.filter(f => f && typeof f.time === 'number' && typeof f.path === 'string');
-
-		radarFrames = frames;
-		if (el.radarFrame) {
-			el.radarFrame.min = 0;
-			el.radarFrame.max = Math.max(0, radarFrames.length - 1);
-		}
-
-		setRadarFrame(Math.max(0, radarFrames.length - 1));
-	} catch (e) {
-		console.error('❌ Radar frames failed:', e);
-		if (el.radarTime) el.radarTime.textContent = '—';
-	}
-}
-
-function setRadarFrame(nextIndex) {
-	if (!mapInstance || radarFrames.length === 0) return;
-
-	radarIndex = Math.max(0, Math.min(nextIndex, radarFrames.length - 1));
-	const frame = radarFrames[radarIndex];
-	const urlTemplate = `${radarHost}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
-
-	if (!radarLayer) {
-		radarLayer = L.tileLayer(urlTemplate, {
-			opacity: 0.88,
-			pane: 'radarPane',
-			zIndex: 450,
-			crossOrigin: true,
-			className: 'wx-radar-layer',
-			updateWhenIdle: true,
-			keepBuffer: 2,
-		});
-		radarLayer.addTo(mapInstance);
-	} else {
-		radarLayer.setUrl(urlTemplate);
-		radarLayer.setOpacity(0.88);
-	}
-
-	if (el.radarFrame) el.radarFrame.value = String(radarIndex);
-	if (el.radarTime) {
-		const tz = state.weather?.timezone;
-		const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-		const date = new Date(frame.time * 1000);
-		el.radarTime.textContent = date.toLocaleTimeString(locale, {
-			hour: '2-digit',
-			minute: '2-digit',
-			hour12: currentLang !== 'fa',
-			...(tz ? { timeZone: tz } : {}),
-		});
-	}
-}
-
-function toggleRadarPlayback() {
-	const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-	if (reducedMotion) return;
-
-	if (radarTimer) {
-		clearInterval(radarTimer);
-		radarTimer = null;
-		if (el.radarPlay) el.radarPlay.textContent = t('radarPlay');
-		return;
-	}
-
-	if (el.radarPlay) el.radarPlay.textContent = t('radarStop');
-	radarTimer = setInterval(() => {
-		if (radarFrames.length === 0) return;
-		const next = (radarIndex + 1) % radarFrames.length;
-		setRadarFrame(next);
-	}, 650);
-}
-
-function syncMapToPlace() {
-	if (!state.place?.lat || !state.place?.lon) return;
-
-	const key = `${state.place.lat.toFixed(4)},${state.place.lon.toFixed(4)}`;
-	if (key === lastMapCenterKey) return;
-
-	if (!mapInstance) {
-		pendingMapCenter = { lat: state.place.lat, lon: state.place.lon };
-		return;
-	}
-
-	lastMapCenterKey = key;
-	const targetZoom = Math.max(mapInstance.getZoom() || 0, 7);
-	mapInstance.setView([state.place.lat, state.place.lon], targetZoom, { animate: true });
-}
-
-// Loading Card Functions
-let loadingTimeout = null;
-let slowConnectionShown = false;
-
-function showLoadingCard(message, showSlowConnection = true) {
-	if (!el.loadingCard || !el.loadingCardMessage) return;
-	
-	el.loadingCardMessage.textContent = message;
-	el.loadingCardStatus.textContent = '';
-	el.loadingCard.classList.add('show');
-	slowConnectionShown = false;
-	
-	// Show slow connection warning after 3 seconds
-	if (showSlowConnection) {
-		loadingTimeout = setTimeout(() => {
-			if (el.loadingCard.classList.contains('show') && !slowConnectionShown) {
-				el.loadingCardStatus.textContent = t('slowConnection');
-				slowConnectionShown = true;
-			}
-		}, 3000);
-	}
-}
-
-function hideLoadingCard() {
-	if (!el.loadingCard) return;
-	
-	el.loadingCard.classList.remove('show');
-	if (loadingTimeout) {
-		clearTimeout(loadingTimeout);
-		loadingTimeout = null;
-	}
-	slowConnectionShown = false;
-}
-
-// Location Permission Modal Functions
-let locationPermissionShown = false;
-
-function showLocationPermissionModal() {
-	if (!el.locationPermissionModal || locationPermissionShown) return;
-	
-	// Check if user has already denied location permission
-	const locationPermissionDenied = localStorage.getItem('locationPermissionDenied');
-	if (locationPermissionDenied === 'true') {
-		console.log('📍 Location permission previously denied, skipping modal');
-		return false;
-	}
-	
-	el.locationPermissionModal.classList.add('show');
-	locationPermissionShown = true;
-	return true;
-}
-
-function hideLocationPermissionModal() {
-	if (!el.locationPermissionModal) return;
-	
-	el.locationPermissionModal.classList.remove('show');
-}
-
-async function requestLocationPermission() {
-	hideLocationPermissionModal();
-	
-	try {
-		console.log('📍 Requesting location permission...');
-		const { lat, lon } = await getGeoPosition();
-		console.log('✅ Location permission granted:', lat, lon);
-		await loadByLocation(lat, lon);
-		const cityName = state.place?.name || t('yourLocation');
-		showToast(`${cityName} ${t('locationDetected')}`);
-		localStorage.setItem('locationPermissionDenied', 'false');
-		return true;
-	} catch (e) {
-		console.log('⚠️ Location permission denied:', e.message);
-		denyLocationPermission();
-		return false;
-	}
-}
-
-function denyLocationPermission() {
-	hideLocationPermissionModal();
-	localStorage.setItem('locationPermissionDenied', 'true');
-	console.log('📍 Location permission denied, will try IP location...');
-	
-	// Try IP location as fallback
-	(async () => {
-		try {
-			const ipLoc = await getIpLocation();
-			if (ipLoc) {
-				await loadByLocation(ipLoc.lat, ipLoc.lon);
-				const cityName = state.place?.name || t('yourLocation');
-				showToast(`${cityName} ${t('locationFromIP')}`);
-			} else {
-				showToast(t('locationFailed'));
-				await loadByLocation(35.6892, 51.3890); // Tehran as default
-			}
-		} catch (e) {
-			console.error('❌ Error loading location:', e);
-			await loadByLocation(35.6892, 51.3890); // Tehran as default
-		}
-	})();
-}
-
-// Moon phase calculation با Moon Age دقیق
-function getMoonPhase(date) {
-	const year = date.getFullYear();
-	const month = date.getMonth() + 1;
-	const day = date.getDate();
-	
-	// محاسبه Julian Day Number
-	let c = 0, e = 0;
-	if (month < 3) {
-		c = year - 1;
-		e = month + 12;
-	} else {
-		c = year;
-		e = month;
-	}
-	const jd = Math.floor((365.25 * (c + 4716))) + Math.floor((30.6001 * (e + 1))) + day - 1524.5;
-	
-	// New Moon reference (2000-01-06 18:14 UTC = JD 2451550.26)
-	const newMoonRef = 2451550.26;
-	const synodicMonth = 29.530588853; // طول یک ماه قمری
-	
-	// محاسبه Moon Age (تعداد روزهایی که از ماه نو گذشته)
-	const daysSinceNewMoon = jd - newMoonRef;
-	const moonAge = daysSinceNewMoon % synodicMonth;
-	
-	// فاز به صورت درصد (0 = نو، 0.5 = بدر، 1 = نو)
-	const phase = moonAge / synodicMonth;
-	
-	// درصد روشنایی
-	let illumination;
-	if (phase < 0.5) {
-		illumination = Math.round(phase * 200); // 0% → 100%
-	} else {
-		illumination = Math.round((1 - phase) * 200); // 100% → 0%
-	}
-	
-	// نام فاز بر اساس Moon Age
-	let phaseName, phaseEmoji;
-	if (moonAge < 1.84) {
-		phaseName = t('moonNew'); phaseEmoji = '🌑';
-	} else if (moonAge < 5.53) {
-		phaseName = t('moonWaxingCrescent'); phaseEmoji = '🌒';
-	} else if (moonAge < 9.23) {
-		phaseName = t('moonFirstQuarter'); phaseEmoji = '🌓';
-	} else if (moonAge < 12.91) {
-		phaseName = t('moonWaxingGibbous'); phaseEmoji = '🌔';
-	} else if (moonAge < 16.61) {
-		phaseName = t('moonFull'); phaseEmoji = '🌕';
-	} else if (moonAge < 20.30) {
-		phaseName = t('moonWaningGibbous'); phaseEmoji = '🌖';
-	} else if (moonAge < 23.99) {
-		phaseName = t('moonLastQuarter'); phaseEmoji = '🌗';
-	} else if (moonAge < 27.69) {
-		phaseName = t('moonWaningCrescent'); phaseEmoji = '🌘';
-	} else {
-		phaseName = t('moonNew'); phaseEmoji = '🌑';
-	}
-	
-	console.log('🌙 Moon Phase Calculation:');
-	console.log('Date:', date.toLocaleDateString('fa-IR'));
-	console.log('Julian Day:', jd);
-	console.log('Moon Age (days):', moonAge.toFixed(2));
-	console.log('Phase (0-1):', phase.toFixed(4));
-	console.log('Illumination:', illumination + '%');
-	console.log('Phase Name:', phaseEmoji, phaseName);
-	
-	return { 
-		name: `${phaseEmoji} ${phaseName}`, 
-		phase: phase, 
-		moonAge: moonAge,
-		illumination,
-		emoji: phaseEmoji
-	};
-}
-
-// ========= PLANETARY POSITION CALCULATIONS (Astronomical) =========
-// تبدیل تاریخ به Julian Day Number
-function dateToJulianDay(date) {
-	const a = Math.floor((14 - (date.getMonth() + 1)) / 12);
-	const y = date.getFullYear() + 4800 - a;
-	const m = (date.getMonth() + 1) + 12 * a - 3;
-	
-	let jd = date.getDate() + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4);
-	jd = jd - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
-	
-	const hours = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
-	jd += (hours - 12) / 24;
-	
-	return jd;
-}
-
-// محاسبه تعداد قرن‌های جولیان از J2000.0
-function julianCenturies(jd) {
-	return (jd - 2451545.0) / 36525.0;
-}
-
-// نرمال‌سازی زاویه به بازه 0-360
-function normalizeAngle(angle) {
-	angle = angle % 360;
-	if (angle < 0) angle += 360;
-	return angle;
-}
-
-// محاسبه موقعیت سیارات بر اساس عناصر مداری
-function calculatePlanetPosition(planetName, date) {
-	const jd = dateToJulianDay(date);
-	const T = julianCenturies(jd);
-	
-	const orbitalElements = {
-		'mercury': {
-			a: 0.38709927,
-			e: 0.20563593 + 0.00001906 * T,
-			I: 7.00497902 - 0.00594749 * T,
-			L: 252.25032350 + 149472.67411175 * T,
-			w_bar: 77.45779628 + 0.16047689 * T,
-			Omega: 48.33076593 - 0.12534081 * T
-		},
-		'venus': {
-			a: 0.72333566,
-			e: 0.00677672 - 0.00004107 * T,
-			I: 3.39467605 - 0.00078890 * T,
-			L: 181.97909950 + 58517.81538729 * T,
-			w_bar: 131.60246718 + 0.00268329 * T,
-			Omega: 76.67984255 - 0.27769418 * T
-		},
-		'earth': {
-			a: 1.00000261,
-			e: 0.01671123 - 0.00004392 * T,
-			I: 0.00001531 - 0.01294668 * T,
-			L: 100.46457166 + 35999.37244981 * T,
-			w_bar: 102.93768193 + 0.32327364 * T,
-			Omega: 0.0
-		},
-		'mars': {
-			a: 1.52371034,
-			e: 0.09339410 + 0.00007882 * T,
-			I: 1.84969142 - 0.00813131 * T,
-			L: 355.43299958 + 19140.30268499 * T,
-			w_bar: 336.06023395 + 0.44441088 * T,
-			Omega: 49.55953891 - 0.29257343 * T
-		},
-		'jupiter': {
-			a: 5.20288700,
-			e: 0.04838624 - 0.00013253 * T,
-			I: 1.30439695 - 0.00183714 * T,
-			L: 34.39644051 + 3034.74612775 * T,
-			w_bar: 14.72847983 + 0.21252668 * T,
-			Omega: 100.47390909 + 0.20469106 * T
-		},
-		'saturn': {
-			a: 9.53667594,
-			e: 0.05386179 - 0.00050991 * T,
-			I: 2.48599187 + 0.00193609 * T,
-			L: 49.95424423 + 1222.49362201 * T,
-			w_bar: 92.59887831 - 0.41897216 * T,
-			Omega: 113.66242448 - 0.28867794 * T
-		},
-		'uranus': {
-			a: 19.18916464,
-			e: 0.04725744 - 0.00004397 * T,
-			I: 0.77263783 - 0.00242939 * T,
-			L: 313.23810451 + 428.48202785 * T,
-			w_bar: 170.95427630 + 0.40805281 * T,
-			Omega: 74.01692503 + 0.04240589 * T
-		},
-		'neptune': {
-			a: 30.06992276,
-			e: 0.00859048 + 0.00005105 * T,
-			I: 1.77004347 + 0.00035372 * T,
-			L: 304.88003542 + 218.45945325 * T,
-			w_bar: 44.96476227 - 0.32241464 * T,
-			Omega: 131.78422574 - 0.00508664 * T
-		}
-	};
-	
-	const elem = orbitalElements[planetName];
-	if (!elem) return { x: 0, y: 0, z: 0, distance: 0 };
-	
-	const M = normalizeAngle(elem.L - elem.w_bar);
-	
-	let E = M * Math.PI / 180;
-	const e = elem.e;
-	for (let i = 0; i < 10; i++) {
-		const dE = (E - e * Math.sin(E) - M * Math.PI / 180) / (1 - e * Math.cos(E));
-		E -= dE;
-		if (Math.abs(dE) < 1e-8) break;
-	}
-	
-	const v = 2 * Math.atan2(
-		Math.sqrt(1 + e) * Math.sin(E / 2),
-		Math.sqrt(1 - e) * Math.cos(E / 2)
-	);
-	
-	const r = elem.a * (1 - e * Math.cos(E));
-	
-	const x_orbital = r * Math.cos(v);
-	const y_orbital = r * Math.sin(v);
-	
-	const I = elem.I * Math.PI / 180;
-	const Omega = elem.Omega * Math.PI / 180;
-	const w = (elem.w_bar - elem.Omega) * Math.PI / 180;
-	
-	const x_ecl = (Math.cos(w) * Math.cos(Omega) - Math.sin(w) * Math.sin(Omega) * Math.cos(I)) * x_orbital +
-				  (-Math.sin(w) * Math.cos(Omega) - Math.cos(w) * Math.sin(Omega) * Math.cos(I)) * y_orbital;
-	const y_ecl = (Math.cos(w) * Math.sin(Omega) + Math.sin(w) * Math.cos(Omega) * Math.cos(I)) * x_orbital +
-				  (-Math.sin(w) * Math.sin(Omega) + Math.cos(w) * Math.cos(Omega) * Math.cos(I)) * y_orbital;
-	const z_ecl = (Math.sin(w) * Math.sin(I)) * x_orbital + (Math.cos(w) * Math.sin(I)) * y_orbital;
-	
-	return { x: x_ecl, y: y_ecl, z: z_ecl, distance: r };
-}
-
-// محاسبه ارتفاع و سمت (altitude & azimuth) خورشید
-function calculateSunAltitude(date, lat, lon) {
-	const jd = dateToJulianDay(date);
-	const T = julianCenturies(jd);
-	
-	// Mean longitude of Sun
-	const L0 = normalizeAngle(280.46646 + 36000.76983 * T + 0.0003032 * T * T);
-	
-	// Mean anomaly of Sun
-	const M = normalizeAngle(357.52911 + 35999.05029 * T - 0.0001537 * T * T);
-	const M_rad = M * Math.PI / 180;
-	
-	// Equation of center
-	const C = (1.914602 - 0.004817 * T - 0.000014 * T * T) * Math.sin(M_rad) +
-			  (0.019993 - 0.000101 * T) * Math.sin(2 * M_rad) +
-			  0.000289 * Math.sin(3 * M_rad);
-	
-	// True longitude
-	const sunLon = normalizeAngle(L0 + C);
-	const sunLon_rad = sunLon * Math.PI / 180;
-	
-	// Obliquity of ecliptic
-	const epsilon = (23.439291 - 0.0130042 * T - 0.00000016 * T * T + 0.000000504 * T * T * T) * Math.PI / 180;
-	
-	// Declination
-	const delta = Math.asin(Math.sin(epsilon) * Math.sin(sunLon_rad));
-	
-	// Equation of Time (minutes)
-	const E = 4 * (L0 - 0.0057183 - normalizeAngle(L0 - M) + C);
-	
-	// Hour angle - اصلاح شده برای محاسبه دقیق با استفاده از UTC
-	const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-	const longitudeCorrection = lon / 15; // تبدیل طول جغرافیایی به ساعت
-	const localSolarTime = utcHours + longitudeCorrection + E / 60;
-	const hourAngle = (localSolarTime - 12) * 15; // degrees
-	const H_rad = hourAngle * Math.PI / 180;
-	
-	const lat_rad = lat * Math.PI / 180;
-	
-	// Altitude
-	const altitude = Math.asin(
-		Math.sin(lat_rad) * Math.sin(delta) +
-		Math.cos(lat_rad) * Math.cos(delta) * Math.cos(H_rad)
-	) * 180 / Math.PI;
-	
-	// Azimuth
-	const azimuth = Math.atan2(
-		Math.sin(H_rad),
-		Math.cos(H_rad) * Math.sin(lat_rad) - Math.tan(delta) * Math.cos(lat_rad)
-	) * 180 / Math.PI + 180;
-	
-	// DEBUG: لاگ اطلاعات برای بررسی
-	console.log('🌞 Sun Altitude Calculation:');
-	console.log('  UTC Time:', date.toISOString());
-	console.log('  Latitude:', lat.toFixed(2), '  Longitude:', lon.toFixed(2));
-	console.log('  UTC Hours:', utcHours.toFixed(2));
-	console.log('  Longitude Correction:', longitudeCorrection.toFixed(2), 'hours');
-	console.log('  Local Solar Time:', localSolarTime.toFixed(2), 'hours');
-	console.log('  Hour Angle:', hourAngle.toFixed(2), 'degrees');
-	console.log('  Declination:', (delta * 180 / Math.PI).toFixed(2), 'degrees');
-	console.log('  ✅ ALTITUDE:', altitude.toFixed(2), 'degrees');
-	console.log('  ✅ AZIMUTH:', normalizeAngle(azimuth).toFixed(2), 'degrees');
-	
-	return { altitude, azimuth: normalizeAngle(azimuth) };
-}
-
-// محاسبه دقیق ارتفاع و سمت ماه
-function calculateMoonAltitude(date, lat, lon) {
-	const moonPos = calculateMoonPosition(date, lat, lon);
-	return { altitude: moonPos.altitude, azimuth: moonPos.azimuth };
-}
-
-// رسم قوس نمایش ارتفاع (altitude arc)
-function renderAltitudeArc(container, altitude, color) {
-	if (!container) return;
-	
-	container.innerHTML = '';
-	
-	// محدود کردن altitude به 0-90 درجه
-	const clampedAlt = Math.max(0, Math.min(90, altitude));
-	
-	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('width', '100');
-	svg.setAttribute('height', '60');
-	svg.setAttribute('viewBox', '0 0 100 60');
-	
-	// خط افق
-	const horizon = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-	horizon.setAttribute('x1', '10');
-	horizon.setAttribute('y1', '50');
-	horizon.setAttribute('x2', '90');
-	horizon.setAttribute('y2', '50');
-	horizon.setAttribute('stroke', 'rgba(255,255,255,0.3)');
-	horizon.setAttribute('stroke-width', '1');
-	svg.appendChild(horizon);
-	
-	// قوس آسمان
-	const skyArc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-	skyArc.setAttribute('d', 'M 10,50 Q 50,10 90,50');
-	skyArc.setAttribute('fill', 'none');
-	skyArc.setAttribute('stroke', 'rgba(135,206,235,0.3)');
-	skyArc.setAttribute('stroke-width', '1');
-	skyArc.setAttribute('stroke-dasharray', '2,2');
-	svg.appendChild(skyArc);
-	
-	// محاسبه موقعیت بر اساس ارتفاع
-	const t = clampedAlt / 90;
-	const x = 10 + 80 * 0.5;
-	const y = 50 - (40 * t);
-	
-	// خط ارتفاع
-	const altLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-	altLine.setAttribute('x1', '50');
-	altLine.setAttribute('y1', '50');
-	altLine.setAttribute('x2', x.toString());
-	altLine.setAttribute('y2', y.toString());
-	altLine.setAttribute('stroke', color);
-	altLine.setAttribute('stroke-width', '2');
-	altLine.setAttribute('opacity', '0.7');
-	svg.appendChild(altLine);
-	
-	// دایره نمایش جسم آسمانی
-	const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-	circle.setAttribute('cx', x.toString());
-	circle.setAttribute('cy', y.toString());
-	circle.setAttribute('r', '4');
-	circle.setAttribute('fill', color);
-	svg.appendChild(circle);
-	
-	// انیمیشن
-	const animate = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
-	animate.setAttribute('attributeName', 'r');
-	animate.setAttribute('values', '4;5;4');
-	animate.setAttribute('dur', '2s');
-	animate.setAttribute('repeatCount', 'indefinite');
-	circle.appendChild(animate);
-	
-	// نمایش عدد ارتفاع
-	const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-	text.setAttribute('x', '50');
-	text.setAttribute('y', '8');
-	text.setAttribute('text-anchor', 'middle');
-	text.setAttribute('fill', color);
-	text.setAttribute('font-size', '10');
-	text.setAttribute('font-weight', 'bold');
-	text.textContent = `${formatNumber(Math.round(clampedAlt))}°`;
-	svg.appendChild(text);
-	
-	container.appendChild(svg);
-}
-
-// محاسبه دقیق موقعیت ماه (Meeus algorithm)
-function calculateMoonPosition(date, lat, lon) {
-	const jd = dateToJulianDay(date);
-	const T = (jd - 2451545.0) / 36525.0;
-	
-	// Mean longitude of Moon
-	const Lp = normalizeAngle(218.3164477 + 481267.88123421 * T - 0.0015786 * T * T + T * T * T / 538841 - T * T * T * T / 65194000);
-	
-	// Mean elongation of Moon
-	const D = normalizeAngle(297.8501921 + 445267.1114034 * T - 0.0018819 * T * T + T * T * T / 545868 - T * T * T * T / 113065000);
-	
-	// Sun's mean anomaly
-	const M = normalizeAngle(357.5291092 + 35999.0502909 * T - 0.0001536 * T * T + T * T * T / 24490000);
-	
-	// Moon's mean anomaly
-	const Mp = normalizeAngle(134.9633964 + 477198.8675055 * T + 0.0087414 * T * T + T * T * T / 69699 - T * T * T * T / 14712000);
-	
-	// Moon's argument of latitude
-	const F = normalizeAngle(93.2720950 + 483202.0175233 * T - 0.0036539 * T * T - T * T * T / 3526000 + T * T * T * T / 863310000);
-	
-	// Convert to radians
-	const Lp_rad = Lp * Math.PI / 180;
-	const D_rad = D * Math.PI / 180;
-	const M_rad = M * Math.PI / 180;
-	const Mp_rad = Mp * Math.PI / 180;
-	const F_rad = F * Math.PI / 180;
-	
-	// Longitude perturbations (major terms)
-	let sigmaL = 0;
-	sigmaL += 6288774 * Math.sin(Mp_rad);
-	sigmaL += 1274027 * Math.sin(2 * D_rad - Mp_rad);
-	sigmaL += 658314 * Math.sin(2 * D_rad);
-	sigmaL += 213618 * Math.sin(2 * Mp_rad);
-	sigmaL += -185116 * Math.sin(M_rad);
-	sigmaL += -114332 * Math.sin(2 * F_rad);
-	
-	// Latitude perturbations (major terms)
-	let sigmaB = 0;
-	sigmaB += 5128122 * Math.sin(F_rad);
-	sigmaB += 280602 * Math.sin(Mp_rad + F_rad);
-	sigmaB += 277693 * Math.sin(Mp_rad - F_rad);
-	sigmaB += 173237 * Math.sin(2 * D_rad - F_rad);
-	sigmaB += 55413 * Math.sin(2 * D_rad - Mp_rad + F_rad);
-	
-	// Distance perturbations (major terms)
-	let sigmaR = 0;
-	sigmaR += -20905355 * Math.cos(Mp_rad);
-	sigmaR += -3699111 * Math.cos(2 * D_rad - Mp_rad);
-	sigmaR += -2955968 * Math.cos(2 * D_rad);
-	sigmaR += -569925 * Math.cos(2 * Mp_rad);
-	
-	// Moon's geocentric longitude
-	const lambda = Lp + sigmaL / 1000000;
-	const lambda_rad = lambda * Math.PI / 180;
-	
-	// Moon's geocentric latitude
-	const beta = sigmaB / 1000000;
-	const beta_rad = beta * Math.PI / 180;
-	
-	// Distance to moon (km)
-	const distance = 385000.56 + sigmaR / 1000;
-	
-	// Obliquity of ecliptic
-	const epsilon = (23.439291 - 0.0130042 * T) * Math.PI / 180;
-	
-	// Convert to equatorial coordinates
-	const RA = Math.atan2(
-		Math.sin(lambda_rad) * Math.cos(epsilon) - Math.tan(beta_rad) * Math.sin(epsilon),
-		Math.cos(lambda_rad)
-	);
-	
-	const Dec = Math.asin(
-		Math.sin(beta_rad) * Math.cos(epsilon) + Math.cos(beta_rad) * Math.sin(epsilon) * Math.sin(lambda_rad)
-	);
-	
-	// Local Sidereal Time
-	const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-	const GMST = normalizeAngle(280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - T * T * T / 38710000);
-	const LST = normalizeAngle(GMST + lon);
-	const LST_rad = LST * Math.PI / 180;
-	
-	// Hour Angle
-	const H = LST_rad - RA;
-	
-	// Convert to horizontal coordinates
-	const lat_rad = lat * Math.PI / 180;
-	
-	const altitude = Math.asin(
-		Math.sin(lat_rad) * Math.sin(Dec) + Math.cos(lat_rad) * Math.cos(Dec) * Math.cos(H)
-	) * 180 / Math.PI;
-	
-	const azimuth = normalizeAngle(Math.atan2(
-		Math.sin(H),
-		Math.cos(H) * Math.sin(lat_rad) - Math.tan(Dec) * Math.cos(lat_rad)
-	) * 180 / Math.PI + 180);
-	
-	return { altitude, azimuth, distance, RA, Dec };
-}
-
-// محاسبه دقیق طلوع و غروب ماه
-function getMoonRiseSet(date, lat, lon) {
-	const dateStart = new Date(date);
-	dateStart.setHours(0, 0, 0, 0);
-	
-	let moonrise = null;
-	let moonset = null;
-	let wasAbove = false;
-	let isAbove = false;
-	
-	// Check every 10 minutes throughout the day
-	for (let hour = 0; hour < 24; hour += 0.167) { // 0.167 hour = 10 minutes
-		const checkDate = new Date(dateStart.getTime() + hour * 3600000);
-		const moonPos = calculateMoonPosition(checkDate, lat, lon);
-		
-		// Moon is above horizon if altitude > -0.5 degrees (accounting for refraction)
-		isAbove = moonPos.altitude > -0.5;
-		
-		// Detect rise (transition from below to above horizon)
-		if (!wasAbove && isAbove && !moonrise) {
-			// Refine to minute precision
-			for (let min = 0; min < 10; min++) {
-				const refineDate = new Date(checkDate.getTime() - 10 * 60000 + min * 60000);
-				const refinePos = calculateMoonPosition(refineDate, lat, lon);
-				if (refinePos.altitude > -0.5) {
-					moonrise = refineDate.toISOString();
-					break;
-				}
-			}
-		}
-		
-		// Detect set (transition from above to below horizon)
-		if (wasAbove && !isAbove && !moonset) {
-			// Refine to minute precision
-			for (let min = 0; min < 10; min++) {
-				const refineDate = new Date(checkDate.getTime() - 10 * 60000 + min * 60000);
-				const refinePos = calculateMoonPosition(refineDate, lat, lon);
-				if (refinePos.altitude <= -0.5) {
-					moonset = refineDate.toISOString();
-					break;
-				}
-			}
-		}
-		
-		wasAbove = isAbove;
-	}
-	
-	// If no rise/set found, moon might be circumpolar (always up or always down)
-	if (!moonrise) {
-		const midDayPos = calculateMoonPosition(new Date(dateStart.getTime() + 12 * 3600000), lat, lon);
-		if (midDayPos.altitude > 0) {
-			// Moon is up all day
-			moonrise = dateStart.toISOString();
-		} else {
-			// Moon is down all day
-			moonrise = new Date(dateStart.getTime() + 12 * 3600000).toISOString();
-		}
-	}
-	
-	if (!moonset) {
-		const midDayPos = calculateMoonPosition(new Date(dateStart.getTime() + 12 * 3600000), lat, lon);
-		if (midDayPos.altitude > 0) {
-			// Moon is up all day
-			moonset = new Date(dateStart.getTime() + 23.99 * 3600000).toISOString();
-		} else {
-			// Moon is down all day
-			moonset = new Date(dateStart.getTime() + 12 * 3600000).toISOString();
-		}
-	}
-	
-	console.log('🌙 Moon rise/set calculated:');
-	console.log('  Moonrise:', moonrise);
-	console.log('  Moonset:', moonset);
-	
-	return { moonrise, moonset };
-}
-
-// محاسبه دقیق فاصله ماه از زمین
-function calculateMoonDistance(date) {
-	// استفاده از تابع دقیق محاسبه موقعیت ماه
-	// از موقعیت فعلی کاربر استفاده می‌کنیم، یا اگر موجود نبود از موقعیت پیش‌فرض
-	const lat = state.place?.lat || 35.6892;
-	const lon = state.place?.lon || 51.3890;
-	
-	const moonPos = calculateMoonPosition(date, lat, lon);
-	return moonPos.distance;
-}
-
-// UV Index label
-function getUVLabel(uv) {
-	if (uv == null) return '—';
-	const val = formatNumber(Math.round(uv));
-	if (uv < 3) return `${val} - ${t('uvLow')}`;
-	if (uv < 6) return `${val} - ${t('uvModerate')}`;
-	if (uv < 8) return `${val} - ${t('uvHigh')}`;
-	if (uv < 11) return `${val} - ${t('uvVeryHigh')}`;
-	return `${val} - ${t('uvExtreme')}`;
-}
-
-// AQI label
-function getAQILabel(aqi) {
-	if (aqi == null) return '—';
-	const val = Math.round(aqi);
-	const valStr = formatNumber(val);
-	if (val <= 50) return `${valStr} - ${t('aqiGood')}`;
-	if (val <= 100) return `${valStr} - ${t('aqiModerate')}`;
-	if (val <= 150) return `${valStr} - ${t('aqiUnhealthySensitive')}`;
-	if (val <= 200) return `${valStr} - ${t('aqiUnhealthy')}`;
-	if (val <= 300) return `${valStr} - ${t('aqiVeryUnhealthy')}`;
-	return `${valStr} - ${t('aqiHazardous')}`;
-}
-
-// Weather code mapping
-function weatherCodeToInfo(code, isDay = 1) {
-	const weatherKeys = {
-		0: 'sunny',
-		1: 'partlyCloudy',
-		2: 'cloudy',
-		3: 'cloudy',
-		45: 'fog',
-		48: 'rime',
-		51: 'drizzleLight',
-		53: 'drizzle',
-		55: 'drizzleHeavy',
-		56: 'freezingDrizzle',
-		57: 'freezingDrizzle',
-		61: 'rain',
-		63: 'rainModerate',
-		65: 'rainHeavy',
-		66: 'freezingRain',
-		67: 'freezingRain',
-		71: 'snowLight',
-		73: 'snow',
-		75: 'snowHeavy',
-		77: 'snowGrains',
-		80: 'showers',
-		81: 'showersModerate',
-		82: 'showersHeavy',
-		85: 'snowShowers',
-		86: 'snowShowers',
-		95: 'thunderstorm',
-		96: 'hail',
-		99: 'hail',
-	};
-	
-	const iconMap = {
-		0: 'sunny', 1: 'partly-cloudy', 2: 'cloudy', 3: 'cloudy',
-		45: 'cloudy', 48: 'cloudy',
-		51: 'rainy', 53: 'rainy', 55: 'rainy', 56: 'rainy', 57: 'rainy',
-		61: 'rainy', 63: 'rainy', 65: 'rainy', 66: 'rainy', 67: 'rainy',
-		71: 'snowy', 73: 'snowy', 75: 'snowy', 77: 'snowy',
-		80: 'rainy', 81: 'rainy', 82: 'rainy',
-		85: 'snowy', 86: 'snowy',
-		95: 'thunderstorm', 96: 'thunderstorm', 99: 'thunderstorm'
-	};
-	
-	const key = iconMap[code] || 'cloudy';
-	const labelKey = weatherKeys[code] || 'cloudy';
-	const label = t(labelKey);
-	
-	return { key, label, theme: (isDay ? key + '-day' : 'night') };
-}
-
-// Icon rendering
-function renderIcon(container, type, size = 'large') {
-	container.innerHTML = '';
-	container.className = 'wx-icon' + (size === 'small' ? ' small' : '');
-	if (type === 'sunny') {
-		const sun = document.createElement('div');
-		sun.className = 'sun';
-		sun.innerHTML = '<div class="core"></div><div class="rays"></div>';
-		container.appendChild(sun);
-		return;
-	}
-	if (type === 'partly-cloudy') {
-		// خورشید پشت ابر
-		const sun = document.createElement('div');
-		sun.className = 'sun';
-		sun.innerHTML = '<div class="core"></div><div class="rays"></div>';
-		container.appendChild(sun);
-		const big = document.createElement('div'); big.className = 'cloud big';
-		container.appendChild(big);
-		return;
-	}
-	const big = document.createElement('div'); big.className = 'cloud big';
-	const small = document.createElement('div'); small.className = 'cloud small';
-	container.appendChild(big); container.appendChild(small);
-	if (type === 'rainy') {
-		for (let i = 0; i < 14; i++) {
-			const d = document.createElement('div');
-			d.className = 'drop';
-			d.style.left = `${18 + Math.random() * 60}%`;
-			d.style.animationDelay = `${Math.random() * 1.2}s`;
-			d.style.animationDuration = `${1.1 + Math.random() * 0.8}s`;
-			container.appendChild(d);
-		}
-	}
-	if (type === 'thunderstorm') {
-		// رعد و برق
-		for (let i = 0; i < 16; i++) {
-			const d = document.createElement('div');
-			d.className = 'drop';
-			d.style.left = `${18 + Math.random() * 60}%`;
-			d.style.animationDelay = `${Math.random() * 1.0}s`;
-			d.style.animationDuration = `${0.9 + Math.random() * 0.6}s`;
-			container.appendChild(d);
-		}
-		// اضافه کردن یک برق کوچک
-		const bolt = document.createElement('div');
-		bolt.className = 'bolt';
-		bolt.innerHTML = '⚡';
-		container.appendChild(bolt);
-	}
-	if (type === 'snowy') {
-		for (let i = 0; i < 12; i++) {
-			const f = document.createElement('div');
-			f.className = 'flake';
-			const span = document.createElement('span');
-			f.appendChild(span);
-			f.style.left = `${18 + Math.random() * 60}%`;
-			f.style.animationDelay = `${Math.random() * 1.8}s`;
-			f.style.animationDuration = `${2.2 + Math.random() * 1.4}s`;
-			container.appendChild(f);
-		}
-	}
-}
-
-function setTheme(info) {
-	const b = document.body;
-	const runAnimations = shouldRunBackgroundAnimations();
-	
-	// حذف انیمیشن‌های قبلی
-	document.querySelectorAll('.animated-sun, .animated-cloud, .animated-bird, .animated-dark-cloud, .animated-rain-drop, .animated-rain-cloud, .animated-lightning, .animated-snowflake, .animated-moon, .animated-star, .animated-shooting-star, .static-rain-cloud, .static-snow-cloud').forEach(el => el.remove());
-	
-	b.classList.remove('theme-default', 'theme-sunny-day', 'theme-partly-cloudy', 'theme-cloudy', 'theme-rainy', 'theme-thunderstorm', 'theme-snowy', 'theme-night');
-	
-	switch (info.theme) {
-		case 'sunny-day': 
-			b.classList.add('theme-sunny-day');
-			if (runAnimations) createDayAnimations();
-			break;
-		case 'partly-cloudy-day':
-			b.classList.add('theme-partly-cloudy');
-			if (runAnimations) createPartlyCloudyAnimations();
-			break;
-		case 'cloudy-day': 
-			b.classList.add('theme-cloudy');
-			if (runAnimations) createCloudyAnimations();
-			break;
-		case 'rainy-day': 
-			b.classList.add('theme-rainy');
-			if (runAnimations) createRainyAnimations();
-			break;
-		case 'thunderstorm-day':
-			b.classList.add('theme-thunderstorm');
-			if (runAnimations) createThunderstormAnimations();
-			break;
-		case 'snowy-day':
-			b.classList.add('theme-snowy');
-			if (runAnimations) createSnowyAnimations();
-			break;
-		case 'night': 
-			b.classList.add('theme-night');
-			if (runAnimations) createNightAnimations();
-			break;
-		default: b.classList.add('theme-default');
-	}
-}
-
-// ایجاد انیمیشن‌های خورشید پشت ابر
-function createPartlyCloudyAnimations() {
-	// ایجاد خورشید
-	const sun = document.createElement('div');
-	sun.className = 'animated-sun';
-	document.body.appendChild(sun);
-	
-	// تشخیص اندازه صفحه برای responsive
-	const width = window.innerWidth;
-	let cloudCount;
-	
-	if (width <= 768) {
-		// موبایل: 6 ابر
-		cloudCount = 6;
-	} else if (width <= 1024) {
-		// تبلت: 12 ابر
-		cloudCount = 12;
-	} else {
-		// دسکتاپ: 40 ابر
-		cloudCount = 40;
-	}
-	
-	// ایجاد ابرهای متحرک از چپ به راست
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'animated-dark-cloud';
-		
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.top = `${10 + Math.random() * 50}%`;
-		cloud.style.left = `-200px`; // شروع از خارج صفحه سمت چپ
-		cloud.style.animation = `cloudMoveLeftToRight ${25 + Math.random() * 15}s linear infinite`;
-		cloud.style.animationDelay = `${i * 3}s`;
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد 2 پرنده
-	for (let i = 0; i < 2; i++) {
-		const bird = document.createElement('div');
-		bird.className = 'animated-bird';
-		bird.style.top = `${20 + Math.random() * 30}%`;
-		bird.style.animationDelay = `${i * 8 + Math.random() * 5}s`;
-		bird.style.animationDuration = `${25 + Math.random() * 10}s`;
-		document.body.appendChild(bird);
-	}
-}
-
-// ایجاد انیمیشن‌های ابری - با CSS خالص
-function createCloudyAnimations() {
-	console.log('🌥️ Creating cloudy animations...');
-	
-	// تشخیص اندازه صفحه برای responsive
-	const width = window.innerWidth;
-	console.log('📱 Screen width:', width, 'px');
-	let layer1Count, layer2Count, layer3Count, spacingMultiplier;
-	
-	if (width <= 768) {
-		// موبایل: 6 ابر
-		layer1Count = 2;
-		layer2Count = 2;
-		layer3Count = 2;
-		spacingMultiplier = 50;
-	} else if (width <= 1024) {
-		// تبلت: 12 ابر
-		layer1Count = 4;
-		layer2Count = 4;
-		layer3Count = 4;
-		spacingMultiplier = 25;
-	} else {
-		// دسکتاپ: 40 ابر
-		layer1Count = 14;
-		layer2Count = 13;
-		layer3Count = 13;
-		spacingMultiplier = 7;
-	}
-	
-	// محاسبه top position بر اساس ارتفاع navbar
-	const navbarHeight = document.querySelector('.app-header')?.offsetHeight || 80;
-	// در موبایل 50 پیکسل مارجین بالا اضافه می‌کنیم
-	const mobileMargin = width <= 768 ? -120 : 0;
-	const layer1Top = `${navbarHeight + -5 + mobileMargin}px`;  // مارجین از navbar
-	const layer2Top = `${navbarHeight + -40 + mobileMargin}px`;
-	const layer3Top = `${navbarHeight + -110 + mobileMargin}px`;
-	
-	// لایه اول
-	for (let i = 0; i < layer1Count; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'animated-dark-cloud';
-		
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.top = layer1Top;
-		cloud.style.left = `${i * spacingMultiplier + Math.random() * 3}%`;
-		cloud.style.opacity = '1';
-		cloud.style.animationDelay = `${i * 1.2}s`;
-		cloud.style.animationDuration = `${25 + Math.random() * 15}s`;
-		cloud.style.animationName = 'cloudFloatSlow';
-		cloud.style.animationTimingFunction = 'ease-in-out';
-		cloud.style.animationIterationCount = 'infinite';
-		document.body.appendChild(cloud);
-	}
-	
-	// لایه دوم
-	for (let i = 0; i < layer2Count; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'animated-dark-cloud';
-		
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.top = layer2Top;
-		cloud.style.left = `${i * spacingMultiplier + spacingMultiplier/2 + Math.random() * 3}%`;
-		cloud.style.opacity = '1';
-		cloud.style.animationDelay = `${i * 1.2 + 0.6}s`;
-		cloud.style.animationDuration = `${28 + Math.random() * 15}s`;
-		cloud.style.animationName = 'cloudFloatSlow';
-		cloud.style.animationTimingFunction = 'ease-in-out';
-		cloud.style.animationIterationCount = 'infinite';
-		document.body.appendChild(cloud);
-	}
-	
-	// لایه سوم
-	for (let i = 0; i < layer3Count; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'animated-dark-cloud';
-		
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.top = layer3Top;
-		cloud.style.left = `${i * spacingMultiplier + Math.random() * 4}%`;
-		cloud.style.opacity = '1';
-		cloud.style.animationDelay = `${i * 1.2 + 0.3}s`;
-		cloud.style.animationDuration = `${30 + Math.random() * 15}s`;
-		cloud.style.animationName = 'cloudFloatSlow';
-		cloud.style.animationTimingFunction = 'ease-in-out';
-		cloud.style.animationIterationCount = 'infinite';
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد 2 پرنده که گاهی پرواز می‌کنن
-	for (let i = 0; i < 2; i++) {
-		const bird = document.createElement('div');
-		bird.className = 'animated-bird';
-		bird.style.top = `${25 + Math.random() * 30}%`;
-		bird.style.animationDelay = `${i * 10 + Math.random() * 8}s`;
-		bird.style.animationDuration = `${26 + Math.random() * 12}s`;
-		document.body.appendChild(bird);
-	}
-	
-	const totalClouds = layer1Count + layer2Count + layer3Count;
-	console.log(`✅ Created ${totalClouds} clouds (${layer1Count}+${layer2Count}+${layer3Count})`);
-}
-
-// ایجاد انیمیشن‌های بارانی - با CSS خالص
-function createRainyAnimations() {
-	// تشخیص اندازه صفحه برای responsive
-	const width = window.innerWidth;
-	let cloudCount, rainDropCount;
-	
-	if (width <= 768) {
-		// موبایل: 6 ابر
-		cloudCount = 6;
-		rainDropCount = 12;
-	} else if (width <= 1024) {
-		// تبلت: 12 ابر
-		cloudCount = 12;
-		rainDropCount = 24;
-	} else {
-		// دسکتاپ: 40 ابر
-		cloudCount = 40;
-		rainDropCount = 80;
-	}
-	
-	// ایجاد ابرهای تیره ثابت در بالای صفحه بدون حرکت - لایه اول
-	const screenWidth = window.innerWidth;
-	const cloudWidth = 200;
-	const spacing = cloudCount > 1 ? (screenWidth - (cloudWidth * cloudCount)) / (cloudCount - 1) : 0;
-	
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'static-rain-cloud';
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
-		cloud.style.top = '-20px'; // دقیقا زیر navbar
-		
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد ابرهای تیره ثابت - لایه دوم (10 پیکسل پایین‌تر)
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'static-rain-cloud';
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
-		cloud.style.top = '40px'; // 10 پیکسل پایین‌تر از لایه اول
-		
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد قطره‌های باران که دقیقا از زیر ابرها می‌ریزن
-	const cloudCenterY = 60 + 50; // وسط ابر (top + نصف ارتفاع ابر)
-	
-	// برای هر ابر، چند قطره باران از زیرش می‌ریزد
-	for (let i = 0; i < rainDropCount; i++) {
-		const drop = document.createElement('div');
-		drop.className = 'animated-rain-drop';
-		
-		// پیدا کردن موقعیت یکی از ابرها (cloudCount ابر در 2 لایه)
-		const cloudIndex = Math.floor(i / 2);
-		const xPosition = (cloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
-		
-		// قطرات از زیر ابرها شروع می‌کنن
-		drop.style.left = `${xPosition + (Math.random() * cloudWidth - cloudWidth/2)}px`;
-		drop.style.top = `${cloudCenterY}px`; // از زیر ابرها
-		
-		// تنوع در سرعت و تاخیر
-		drop.style.animationDelay = `${Math.random() * 3}s`;
-		drop.style.animationDuration = `${1.0 + Math.random() * 0.8}s`;
-		
-		document.body.appendChild(drop);
-	}
-	
-	// ایجاد رعد و برق که از ابرها می‌زنن
-	const lightningCount = width <= 768 ? 2 : (width <= 1024 ? 3 : 4);
-	for (let i = 0; i < lightningCount; i++) {
-		const lightning = document.createElement('div');
-		lightning.className = 'animated-lightning';
-		
-		// رعد و برق از زیر یکی از ابرها شروع می‌شه
-		const randomCloudIndex = Math.floor(Math.random() * cloudCount);
-		const xPosition = (randomCloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
-		lightning.style.left = `${xPosition}px`;
-		lightning.style.top = `${cloudCenterY}px`; // از زیر ابرها
-		
-		// هر رعد و برق با تاخیر متفاوت
-		lightning.style.animationDelay = `${i * 2 + Math.random() * 2}s`;
-		
-		document.body.appendChild(lightning);
-	}
-}
-
-// ایجاد انیمیشن‌های رعد و برق (طوفان) - با CSS خالص
-function createThunderstormAnimations() {
-	// تشخیص اندازه صفحه برای responsive
-	const width = window.innerWidth;
-	let cloudCount, rainDropCount;
-	
-	if (width <= 768) {
-		// موبایل: 6 ابر
-		cloudCount = 6;
-		rainDropCount = 20;
-	} else if (width <= 1024) {
-		// تبلت: 12 ابر
-		cloudCount = 12;
-		rainDropCount = 40;
-	} else {
-		// دسکتاپ: 40 ابر
-		cloudCount = 40;
-		rainDropCount = 100;
-	}
-	
-	// ایجاد ابرهای تیره ثابت در بالای صفحه بدون حرکت - لایه اول
-	const screenWidth = window.innerWidth;
-	const cloudWidth = 200;
-	const spacing = cloudCount > 1 ? (screenWidth - (cloudWidth * cloudCount)) / (cloudCount - 1) : 0;
-	
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'static-rain-cloud';
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
-		cloud.style.top = '-20px'; // دقیقا زیر navbar
-		
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد ابرهای تیره ثابت - لایه دوم (10 پیکسل پایین‌تر)
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'static-rain-cloud';
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
-		cloud.style.top = '40px'; // 10 پیکسل پایین‌تر از لایه اول
-		
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد قطره‌های باران شدید که دقیقا از زیر ابرها می‌ریزن
-	const cloudCenterY = 60 + 50; // وسط ابر (top + نصف ارتفاع ابر)
-	
-	// برای هر ابر، چند قطره باران از زیرش می‌ریزد - باران شدیدتر با قطرات بیشتر
-	for (let i = 0; i < rainDropCount; i++) {
-		const drop = document.createElement('div');
-		drop.className = 'animated-rain-drop';
-		
-		// پیدا کردن موقعیت یکی از ابرها (cloudCount ابر در 2 لایه)
-		const cloudIndex = Math.floor(i / 2);
-		const xPosition = (cloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
-		
-		// قطرات از زیر ابرها شروع می‌کنن
-		drop.style.left = `${xPosition + (Math.random() * cloudWidth - cloudWidth/2)}px`;
-		drop.style.top = `${cloudCenterY}px`; // از زیر ابرها
-		
-		// باران شدیدتر با سرعت بیشتر
-		drop.style.animationDelay = `${Math.random() * 2}s`;
-		drop.style.animationDuration = `${0.8 + Math.random() * 0.6}s`;
-		
-		document.body.appendChild(drop);
-	}
-	
-	// ایجاد رعد و برق قوی که از ابرها می‌زنن
-	const lightningCount = width <= 768 ? 4 : (width <= 1024 ? 8 : 12);
-	for (let i = 0; i < lightningCount; i++) {
-		const lightning = document.createElement('div');
-		lightning.className = 'animated-lightning';
-		
-		// رعد و برق از زیر یکی از ابرها شروع می‌شه
-		const randomCloudIndex = Math.floor(Math.random() * cloudCount);
-		const xPosition = (randomCloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
-		lightning.style.left = `${xPosition}px`;
-		lightning.style.top = `${cloudCenterY}px`; // از زیر ابرها
-		
-		// رعد و برق بیشتر و سریع‌تر
-		lightning.style.animationDelay = `${i * 1.5 + Math.random() * 1.5}s`;
-		
-		document.body.appendChild(lightning);
-	}
-}
-
-// ایجاد انیمیشن‌های برفی - با CSS خالص - در دو لایه مثل بارانی
-function createSnowyAnimations() {
-	// تشخیص اندازه صفحه برای responsive
-	const width = window.innerWidth;
-	let cloudCount, snowflakeCount;
-	
-	if (width <= 768) {
-		// موبایل: 6 ابر
-		cloudCount = 6;
-		snowflakeCount = 18;
-	} else if (width <= 1024) {
-		// تبلت: 12 ابر
-		cloudCount = 12;
-		snowflakeCount = 36;
-	} else {
-		// دسکتاپ: 40 ابر
-		cloudCount = 40;
-		snowflakeCount = 70;
-	}
-	
-	// ایجاد ابرهای ثابت در بالای صفحه بدون حرکت - لایه اول
-	const screenWidth = window.innerWidth;
-	const cloudWidth = 200;
-	const spacing = cloudCount > 1 ? (screenWidth - (cloudWidth * cloudCount)) / (cloudCount - 1) : 0;
-	
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'static-snow-cloud';
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
-		cloud.style.top = '-20px'; // دقیقا زیر navbar
-		
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد ابرهای ثابت - لایه دوم (40 پیکسل پایین‌تر)
-	for (let i = 0; i < cloudCount; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'static-snow-cloud';
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.left = `${(i * (cloudWidth + spacing))}px`;
-		cloud.style.top = '40px'; // 40 پیکسل پایین‌تر از لایه اول
-		
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد دانه‌های برف که دقیقا از زیر ابرها می‌بارند
-	const cloudCenterY = 60 + 50; // وسط ابر (top + نصف ارتفاع ابر)
-	
-	// برای هر ابر، چند دانه برف از زیرش می‌بارد
-	for (let i = 0; i < snowflakeCount; i++) {
-		const flake = document.createElement('div');
-		flake.className = 'animated-snowflake';
-		const span = document.createElement('span');
-		flake.appendChild(span);
-		
-		// پیدا کردن موقعیت یکی از ابرها (cloudCount ابر در 2 لایه)
-		const cloudIndex = Math.floor(i / 2);
-		const xPosition = (cloudIndex * (cloudWidth + spacing)) + cloudWidth / 2;
-		
-		// دانه‌های برف از زیر ابرها شروع می‌کنن
-		flake.style.left = `${xPosition + (Math.random() * cloudWidth - cloudWidth/2)}px`;
-		flake.style.top = `${cloudCenterY}px`; // از زیر ابرها
-		
-		// تنوع در سرعت و تاخیر
-		flake.style.animationDelay = `${Math.random() * 4}s`;
-		flake.style.animationDuration = `${6 + Math.random() * 4}s`;
-		const size = 8 + Math.random() * 8;
-		flake.style.width = `${size}px`;
-		flake.style.height = `${size}px`;
-		
-		document.body.appendChild(flake);
-	}
-}
-
-// ایجاد انیمیشن‌های شب - با CSS خالص
-function createNightAnimations() {
-	// ایجاد ماه
-	const moon = document.createElement('div');
-	moon.className = 'animated-moon';
-	document.body.appendChild(moon);
-	
-	// ایجاد 50 ستاره چشمک‌زن
-	for (let i = 0; i < 50; i++) {
-		const star = document.createElement('div');
-		star.className = 'animated-star';
-		star.style.left = `${Math.random() * 100}%`;
-		star.style.top = `${Math.random() * 80}%`;
-		star.style.animationDelay = `${Math.random() * 3}s`;
-		star.style.animationDuration = `${2 + Math.random() * 2}s`;
-		document.body.appendChild(star);
-	}
-	
-	// ایجاد 4 ستاره دنباله‌دار
-	for (let i = 0; i < 4; i++) {
-		const shootingStar = document.createElement('div');
-		shootingStar.className = 'animated-shooting-star';
-		shootingStar.style.left = `${60 + Math.random() * 30}%`;
-		shootingStar.style.top = `${10 + Math.random() * 20}%`;
-		shootingStar.style.animationDelay = `${i * 8 + Math.random() * 4}s`;
-		document.body.appendChild(shootingStar);
-	}
-}
-
-// ایجاد انیمیشن‌های روز - با CSS خالص
-function createDayAnimations() {
-	// ایجاد خورشید
-	const sun = document.createElement('div');
-	sun.className = 'animated-sun';
-	document.body.appendChild(sun);
-	
-	// ایجاد 5-6 ابر بزرگ از نوع cloudy
-	for (let i = 0; i < 6; i++) {
-		const cloud = document.createElement('div');
-		cloud.className = 'animated-dark-cloud';
-		
-		const span = document.createElement('span');
-		const part4 = document.createElement('div');
-		part4.className = 'cloud-part-4';
-		
-		cloud.appendChild(span);
-		cloud.appendChild(part4);
-		
-		cloud.style.top = `${10 + Math.random() * 50}%`;
-		cloud.style.left = `-200px`; // شروع از خارج صفحه سمت چپ
-		cloud.style.animation = `cloudMoveLeftToRight ${25 + Math.random() * 15}s linear infinite`;
-		cloud.style.animationDelay = `${i * 6}s`;
-		document.body.appendChild(cloud);
-	}
-	
-	// ایجاد 4 پرنده
-	for (let i = 0; i < 4; i++) {
-		const bird = document.createElement('div');
-		bird.className = 'animated-bird';
-		bird.style.top = `${10 + Math.random() * 30}%`;
-		bird.style.animationDelay = `${i * 6}s`;
-		document.body.appendChild(bird);
-	}
-}
-
-// Data fetching
-async function fetchJson(url) {
-	const res = await fetch(url);
-	if (!res.ok) throw new Error('خطا در دریافت اطلاعات');
-	return res.json();
-}
-
-async function geocodeSearch(q) {
-	// استفاده از زبان فعلی سایت برای جستجو
-	const lang = currentLang === 'fa' ? 'fa' : 'en';
-	const url = `${OPEN_METEO.search}?name=${encodeURIComponent(q)}&count=8&language=${lang}&format=json`;
-	const data = await fetchJson(url);
-	return (data.results || []).map(r => ({
-		name: r.name,
-		country: r.country || '',
-		admin1: r.admin1 || '',
-		lat: r.latitude,
-		lon: r.longitude,
-		timezone: r.timezone
-	}));
-}
-
-async function reverseGeocode(lat, lon) {
-	try {
-		// ابتدا با زبان فارسی تلاش می‌کنیم
-		let url = `${OPEN_METEO.reverse}?latitude=${lat}&longitude=${lon}&language=fa&format=json`;
-		console.log('🔍 Reverse Geocoding (FA):', url);
-		let data = await fetchJson(url);
-		console.log('📍 Reverse Geocode Response (FA):', data);
-		
-		let r = data.results && data.results[0];
-		
-		// اگر نتیجه‌ای نگرفتیم، با زبان انگلیسی امتحان می‌کنیم
-		if (!r) {
-			console.log('🔄 Trying English...');
-			url = `${OPEN_METEO.reverse}?latitude=${lat}&longitude=${lon}&language=en&format=json`;
-			data = await fetchJson(url);
-			console.log('📍 Reverse Geocode Response (EN):', data);
-			r = data.results && data.results[0];
-		}
-		
-		if (!r) {
-			console.warn('⚠️ No results from reverse geocode');
-			return null;
-		}
-		
-		const place = { 
-			name: r.name || r.city || r.locality || t('yourLocation'), 
-			country: r.country || '', 
-			admin1: r.admin1 || '', 
-			timezone: r.timezone 
-		};
-		console.log('✅ Location found:', place.name);
-		return place;
-	} catch (e) { 
-		console.error('❌ Reverse geocode error:', e);
-		return null; 
-	}
-}
-
-async function fetchWeather(lat, lon) {
-	const allowedModels = new Set(['best_match', 'ecmwf_ifs04', 'gfs_global', 'icon_global']);
-	const selectedModel = allowedModels.has(state.model) ? state.model : 'best_match';
-	const model = encodeURIComponent(selectedModel);
-	const url = `${OPEN_METEO.forecast}?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,is_day,surface_pressure,visibility,dew_point_2m,uv_index&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,precipitation_probability_max,uv_index_max&timezone=auto&forecast_days=16&models=${model}&temperature_unit=celsius&windspeed_unit=ms&precipitation_unit=mm&timeformat=iso8601`;
-	const data = await fetchJson(url);
-	return normalizeWeather(data);
-}
-
-async function fetchAirQuality(lat, lon) {
-	try {
-		const url = `${OPEN_METEO.airQuality}?latitude=${lat}&longitude=${lon}&current=us_aqi&timezone=auto`;
-		const data = await fetchJson(url);
-		return data.current?.us_aqi;
-	} catch { return null; }
-}
-
-async function fetchHistoricalData(lat, lon, period) {
-	const end = new Date();
-	const start = new Date();
-	switch (period) {
-		case 'week': 
-			start.setDate(end.getDate() - 7); 
-			break;
-		case 'month': 
-			start.setDate(end.getDate() - 30); 
-			break;
-		case '6months': 
-			start.setDate(end.getDate() - 180); 
-			break;
-		case 'year': 
-			start.setDate(end.getDate() - 365); 
-			break;
-	}
-	const startStr = start.toISOString().split('T')[0];
-	const endStr = end.toISOString().split('T')[0];
-	const url = `${OPEN_METEO.archive}?latitude=${lat}&longitude=${lon}&start_date=${startStr}&end_date=${endStr}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
-	try {
-		const data = await fetchJson(url);
-		return data.daily;
-	} catch (e) { 
-		console.error('❌ Error fetching historical data:', e);
-		return null; 
-	}
-}
-
-function normalizeWeather(data) {
-	const tz = data.timezone || 'auto';
-	const utcOffsetSeconds = data.utc_offset_seconds || 0;
-
-	const offsetHours = Math.floor(Math.abs(utcOffsetSeconds) / 3600);
-	const offsetMinutes = Math.floor((Math.abs(utcOffsetSeconds) % 3600) / 60);
-	const offsetSign = utcOffsetSeconds >= 0 ? '+' : '-';
-	const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
-	
-	// Helper function to convert local time string to proper ISO with timezone offset
-	const toISOWithOffset = (localTimeStr) => {
-		if (!localTimeStr) return localTimeStr;
-		// اگر قبلا timezone داره، برنگردون
-		if (localTimeStr.includes('+') || localTimeStr.includes('Z') || localTimeStr.match(/[+-]\d{2}:\d{2}$/)) {
-			return localTimeStr;
-		}
-		return `${localTimeStr}${offsetStr}`;
-	};
-
-	// For daily dates (YYYY-MM-DD) keep the local date stable by anchoring at noon.
-	const toISODateWithOffset = (dateStr) => {
-		if (!dateStr) return dateStr;
-		if (dateStr.includes('T')) return toISOWithOffset(dateStr);
-		return `${dateStr}T12:00${offsetStr}`;
-	};
-	
-	let current = {};
-	if (data.current) {
-		current = {
-			time: toISOWithOffset(data.current.time),
-			tempC: data.current.temperature_2m,
-			apparentC: data.current.apparent_temperature,
-			humidity: data.current.relative_humidity_2m,
-			precipMm: data.current.precipitation ?? 0,
-			code: data.current.weather_code,
-			windMs: data.current.wind_speed_10m,
-			windDirection: data.current.wind_direction_10m,
-			isDay: data.current.is_day,
-			pressure: data.current.surface_pressure,
-			visibility: data.current.visibility,
-			dewpoint: data.current.dew_point_2m,
-			uvIndex: data.current.uv_index,
-		};
-	}
-	const hourly = [];
-	if (data.hourly?.time) {
-		for (let i = 0; i < data.hourly.time.length; i++) {
-			hourly.push({
-				time: toISOWithOffset(data.hourly.time[i]),
-				tempC: data.hourly.temperature_2m?.[i],
-				humidity: data.hourly.relative_humidity_2m?.[i],
-				precipProb: data.hourly.precipitation_probability?.[i],
-				precipMm: data.hourly.precipitation?.[i],
-				code: data.hourly.weather_code?.[i],
-				windMs: data.hourly.wind_speed_10m?.[i],
-				windDirection: data.hourly.wind_direction_10m?.[i],
-				uvIndex: data.hourly.uv_index?.[i],
-			});
-		}
-	}
-	const daily = [];
-	if (data.daily?.time) {
-		for (let i = 0; i < data.daily.time.length; i++) {
-			daily.push({
-				time: toISODateWithOffset(data.daily.time[i]),
-				code: data.daily.weather_code?.[i],
-				minC: data.daily.temperature_2m_min?.[i],
-				maxC: data.daily.temperature_2m_max?.[i],
-				// اضافه کردن timezone offset به sunrise و sunset
-				sunrise: toISOWithOffset(data.daily.sunrise?.[i]),
-				sunset: toISOWithOffset(data.daily.sunset?.[i]),
-				precipSum: data.daily.precipitation_sum?.[i],
-				precipProbMax: data.daily.precipitation_probability_max?.[i],
-				uvIndexMax: data.daily.uv_index_max?.[i],
-			});
-		}
-	}
-	return {
-		timezone: tz,
-		utcOffsetSeconds,
-		latitude: data.latitude,
-		longitude: data.longitude,
-		elevation: data.elevation,
-		currentUnits: data.current_units || null,
-		hourlyUnits: data.hourly_units || null,
-		dailyUnits: data.daily_units || null,
-		current,
-		hourly,
-		daily,
-	};
-}
-
-// Calculate average daily weather condition from hourly data
-// این تابع وضعیت کلی روز را بر اساس میانگین شرایط ساعتی محاسبه می‌کند
-function calculateDailyWeatherCondition(hourlyData, dayData, tz) {
-	if (!hourlyData || hourlyData.length === 0) {
-		// اگر داده ساعتی نداریم، از کد API استفاده می‌کنیم
-		return dayData.code || 2; // default to cloudy
-	}
-
-	// دریافت طلوع و غروب برای فیلتر کردن ساعات روز
-	let sunrise = null, sunset = null;
-	if (dayData?.sunrise && dayData?.sunset) {
-		sunrise = new Date(dayData.sunrise);
-		sunset = new Date(dayData.sunset);
-	}
-
-	// فیلتر کردن فقط ساعات روز
-	const dayTimeHours = hourlyData.filter(h => {
-		const hourDate = new Date(h.time);
-		
-		// اگر طلوع و غروب داریم، دقیق بررسی می‌کنیم
-		if (sunrise && sunset) {
-			return hourDate >= sunrise && hourDate <= sunset;
-		}
-		
-		// در غیر این صورت با ساعت محلی تخمین می‌زنیم (6 صبح تا 6 عصر)
-		const localHour = hourDate.getHours();
-		return localHour >= 6 && localHour < 18;
-	});
-
-	// اگر هیچ ساعت روزی نداریم، از کد API استفاده می‌کنیم
-	if (dayTimeHours.length === 0) {
-		return dayData.code || 2;
-	}
-
-	// تبدیل کدهای آب و هوا به دسته‌بندی ساده
-	const codeToCategory = (code) => {
-		if (code === 0) return 'sunny';
-		if (code === 1) return 'partlyCloudy';
-		if (code >= 2 && code <= 3) return 'cloudy';
-		// برای شرایط دیگر (باران، برف، طوفان و غیره)، کد اصلی را نگه می‌داریم
-		return 'other';
-	};
-
-	// شمارش هر دسته
-	const categoryCounts = {
-		sunny: 0,
-		partlyCloudy: 0,
-		cloudy: 0,
-		other: {}
-	};
-
-	dayTimeHours.forEach(h => {
-		const category = codeToCategory(h.code);
-		if (category === 'other') {
-			// برای شرایط دیگر، کد اصلی را نگه می‌داریم
-			categoryCounts.other[h.code] = (categoryCounts.other[h.code] || 0) + 1;
-		} else {
-			categoryCounts[category]++;
-		}
-	});
-
-	const totalDaytimeHours = dayTimeHours.length;
-
-	// بررسی شرایط دیگر (باران، برف، طوفان و غیره)
-	const otherCodes = Object.keys(categoryCounts.other);
-	if (otherCodes.length > 0) {
-		// اگر شرایط خاصی مانند باران، برف یا طوفان وجود دارد
-		// و بیش از 30% ساعات روز را پوشش می‌دهد، از آن استفاده می‌کنیم
-		for (const code of otherCodes) {
-			const count = categoryCounts.other[code];
-			if (count / totalDaytimeHours > 0.3) {
-				return parseInt(code);
-			}
-		}
-	}
-
-	// محاسبه بر اساس اکثریت و ترکیب شرایط
-	// اگر آفتابی + آفتابی-ابری بیش از 50% باشد، و آفتابی-ابری حداقل 20% باشد، آفتابی-ابری می‌زنیم
-	const sunnyAndPartly = categoryCounts.sunny + categoryCounts.partlyCloudy;
-	const partlyCloudyPercent = categoryCounts.partlyCloudy / totalDaytimeHours;
-	const sunnyPercent = categoryCounts.sunny / totalDaytimeHours;
-	
-	if (sunnyAndPartly / totalDaytimeHours > 0.5 && partlyCloudyPercent >= 0.2) {
-		// اگر ترکیب آفتابی و آفتابی-ابری غالب است و آفتابی-ابری حداقل 20% است، آفتابی-ابری
-		return 1; // partlyCloudy
-	}
-
-	// اگر آفتابی بیش از 70% باشد، آفتابی (فقط وقتی که آفتابی-ابری کم است)
-	if (sunnyPercent > 0.7 && partlyCloudyPercent < 0.2) {
-		return 0; // sunny
-	}
-
-	// اگر ابری بیش از 50% باشد، ابری
-	if (categoryCounts.cloudy / totalDaytimeHours > 0.5) {
-		return 2; // cloudy
-	}
-
-	// در غیر این صورت، بر اساس اکثریت ساده
-	// اگر آفتابی بیشتر است و آفتابی-ابری کمتر از 30% است، آفتابی
-	if (categoryCounts.sunny > categoryCounts.partlyCloudy && categoryCounts.sunny > categoryCounts.cloudy && partlyCloudyPercent < 0.3) {
-		return 0; // sunny
-	}
-	
-	// اگر آفتابی-ابری بیشتر است یا آفتابی و آفتابی-ابری ترکیب شده‌اند، آفتابی-ابری
-	if (categoryCounts.partlyCloudy >= categoryCounts.sunny || (categoryCounts.sunny > 0 && categoryCounts.partlyCloudy > 0 && partlyCloudyPercent >= 0.2)) {
-		return 1; // partlyCloudy
-	}
-
-	// به صورت پیش‌فرض، ابری
-	return 2; // cloudy
-}
-
-// Render for selected day
-function renderSelectedDay() {
-	if (!state.place || !state.weather) return;
-	const tz = state.weather.timezone;
-	const dayData = state.weather.daily[state.selectedDayIndex];
-	if (!dayData) return;
-	
-	// شروع ساعت زنده
-	startLiveClock(tz);
-	
-	// Update date selector
-	if (state.selectedDayIndex === 0) {
-		el.selectedDate.textContent = t('today');
-	} else if (state.selectedDayIndex === 1) {
-		el.selectedDate.textContent = t('tomorrow');
-	} else {
-		el.selectedDate.textContent = fmtDayName(dayData.time, tz);
-	}
-	
-	// Get hourly data for that day
-	const dayStr = dayData.time.split('T')[0];
-	const allHourlyForDay = state.weather.hourly.filter(h => h.time.startsWith(dayStr));
-	
-	// برای محاسبه وضعیت کلی روز، از همه ساعات روز استفاده می‌کنیم (شامل ساعت‌های گذشته)
-	const calculatedDailyCode = calculateDailyWeatherCondition(allHourlyForDay, dayData, tz);
-	
-	// برای نمایش، فقط ساعات آینده را فیلتر می‌کنیم
-	let hourlyForDay = allHourlyForDay;
-	if (state.selectedDayIndex === 0) {
-		const hourStartMs = getForecastHourStartMs();
-		hourlyForDay = allHourlyForDay.filter(h => new Date(h.time).getTime() >= hourStartMs);
-		
-		// اگر ساعات امروز کافی نیست، ساعات فردا را هم اضافه کن تا 24 ساعت کامل شود
-		if (hourlyForDay.length < 24 && state.weather.daily.length > 1) {
-			const tomorrowData = state.weather.daily[1];
-			const tomorrowStr = tomorrowData.time.split('T')[0];
-			const tomorrowHours = state.weather.hourly.filter(h =>
-				h.time.startsWith(tomorrowStr) && new Date(h.time).getTime() >= hourStartMs
-			);
-			
-			// اضافه کردن ساعات فردا تا رسیدن به 24 ساعت
-			hourlyForDay = [...hourlyForDay, ...tomorrowHours].slice(0, 24);
-		} else {
-			// محدود کردن به 24 ساعت آینده
-			hourlyForDay = hourlyForDay.slice(0, 24);
-		}
-	}
-	
-	// If today, use current weather; otherwise use first hour of the day or average
-	let displayData;
-		if (state.selectedDayIndex === 0 && state.weather.current) {
-		displayData = state.weather.current;
-		// برای امروز، از کد محاسبه‌شده استفاده می‌کنیم (به جای کد API)
-		displayData.code = calculatedDailyCode;
-	} else if (hourlyForDay.length > 0) {
-		const midDay = hourlyForDay[Math.floor(hourlyForDay.length / 2)];
-		displayData = {
-			time: midDay.time,
-			tempC: (dayData.maxC + dayData.minC) / 2,
-			apparentC: midDay.tempC,
-			humidity: midDay.humidity,
-			precipMm: dayData.precipSum,
-			code: calculatedDailyCode, // استفاده از کد محاسبه‌شده به جای dayData.code
-			windMs: midDay.windMs,
-			windDirection: midDay.windDirection,
-			isDay: 1,
-			pressure: null,
-			visibility: null,
-			dewpoint: null,
-			uvIndex: dayData.uvIndexMax,
-		};
-	} else {
-		displayData = {
-			time: dayData.time,
-			tempC: (dayData.maxC + dayData.minC) / 2,
-			apparentC: null,
-			humidity: null,
-			precipMm: dayData.precipSum,
-			code: calculatedDailyCode, // استفاده از کد محاسبه‌شده به جای dayData.code
-			windMs: null,
-			windDirection: null,
-			isDay: 1,
-			pressure: null,
-			visibility: null,
-			dewpoint: null,
-			uvIndex: dayData.uvIndexMax,
-		};
-	}
-	
-	const info = weatherCodeToInfo(displayData.code, displayData.isDay);
-	setTheme(info);
-	
-	// ساخت نام محل
-	let displayName = state.place.name;
-	
-	// اگر از موقعیت کاربر استفاده شده، اضافه کردن "(موقعیت شما)"
-	if (state.place.isUserLocation) {
-		displayName = `${state.place.name} (${t('yourLocation')})`;
-	}
-	
-	const nameParts = [displayName, state.place.admin1, state.place.country].filter(Boolean);
-	el.placeName.textContent = nameParts.join('، ');
-	el.updatedAt.textContent = `${fmtDateLong(dayData.time, tz)}`;
-	
-	// اگر شب است، ماه را نشان بده، در غیر این صورت آیکون آب و هوا
-	if (displayData.isDay === 0) {
-		// شب است - نمایش ماه
-		el.icon.innerHTML = '';
-		el.icon.className = 'wx-icon moon-icon';
-		const moonEmoji = document.createElement('div');
-		moonEmoji.style.fontSize = '120px';
-		moonEmoji.style.textAlign = 'center';
-		moonEmoji.textContent = '🌙';
-		el.icon.appendChild(moonEmoji);
-		// تغییر متن به "مهتابی" برای شب
-		el.condition.textContent = t('moonlit');
-	} else {
-		// روز است - نمایش آیکون آب و هوا
-		renderIcon(el.icon, info.key);
-		el.condition.textContent = info.label;
-	}
-	el.temp.textContent = fmtTemp(displayData.tempC);
-	
-	// نمایش بیشترین و کمترین دما
-	if (dayData.maxC != null && dayData.minC != null) {
-		const maxTemp = fmtTemp(dayData.maxC);
-		const minTemp = fmtTemp(dayData.minC);
-		el.tempRange.innerHTML = `<span class="temp-max">${maxTemp}</span> / <span class="temp-min">${minTemp}</span>`;
-	} else {
-		el.tempRange.textContent = '';
-	}
-	// Update stat cards with animations
-	// Feels Like - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (displayData.apparentC != null) {
-	updateStatCard('feelsLike', fmtTemp(displayData.apparentC), 'feelsLikeBar', normalizeTemp(displayData.apparentC));
-	} else {
-		updateStatCard('feelsLike', '—', 'feelsLikeBar', 0);
-	}
-	
-	// Humidity - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (displayData.humidity != null) {
-		updateStatCard('humidity', fmtPercent(displayData.humidity), 'humidityBar', displayData.humidity);
-	} else {
-		updateStatCard('humidity', '—', 'humidityBar', 0);
-	}
-	
-	// Wind - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (displayData.windMs != null) {
-		const windKmh = msToKmh(displayData.windMs);
-		const windDir = getWindDirection(displayData.windDirection);
-		let windText = `${formatNumber(windKmh)} km/h`;
-		if (windDir) {
-			windText += ` ${windDir.name} ${formatNumber(windDir.deg)}°`;
-		}
-		updateStatCard('wind', windText, 'windBar', Math.min(windKmh / 100 * 100, 100));
-	} else {
-		updateStatCard('wind', '—', 'windBar', 0);
-	}
-	
-	// Pressure - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (displayData.pressure != null) {
-	updateStatCard('pressure', fmthPa(displayData.pressure), 'pressureBar', normalizePressure(displayData.pressure));
-	} else {
-		updateStatCard('pressure', '—', 'pressureBar', 0);
-	}
-	
-	// Visibility - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (displayData.visibility != null) {
-	updateStatCard('visibility', fmtKm(displayData.visibility), 'visibilityBar', normalizeVisibility(displayData.visibility));
-	} else {
-		updateStatCard('visibility', '—', 'visibilityBar', 0);
-	}
-	
-	// Dewpoint - نمایش کارت حتی اگر داده نیست
-	updateStatCard('dewpoint', displayData.dewpoint != null ? fmtTemp(displayData.dewpoint) : '—');
-	
-	// Precipitation - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (dayData.precipProbMax != null) {
-		updateStatCard('precip', `${fmtPercent(dayData.precipProbMax)} ${t('chance')}`, 'precipBar', dayData.precipProbMax);
-	} else if (displayData.precipMm != null) {
-		updateStatCard('precip', fmtMm(displayData.precipMm), 'precipBar', 0);
-	} else {
-		updateStatCard('precip', '—', 'precipBar', 0);
-	}
-	
-	// UV Index - نمایش کارت حتی اگر داده نیست، ولی نمودار خالی
-	if (displayData.uvIndex != null && displayData.uvIndex > 0) {
-		updateStatCard('uvIndex', getUVLabel(displayData.uvIndex), 'uvBar', Math.min(displayData.uvIndex / 11 * 100, 100));
-	} else {
-		updateStatCard('uvIndex', '—', 'uvBar', 0);
-	}
-	
-	const aqiValue = state.selectedDayIndex === 0 && state.airQuality != null ? state.airQuality : 0;
-	updateStatCard('aqi', state.selectedDayIndex === 0 && state.airQuality != null ? getAQILabel(state.airQuality) : '—', 'aqiBar', Math.min(aqiValue / 300 * 100, 100));
-	
-	updateStatCard('sunrise', dayData.sunrise ? fmtTime(dayData.sunrise, tz) : '—');
-	updateStatCard('sunset', dayData.sunset ? fmtTime(dayData.sunset, tz) : '—');
-	
-	const dateForMoon = new Date(dayData.time);
-	const moonData = getMoonPhase(dateForMoon);
-	updateStatCard('moonPhase', moonData.name);
-	
-	renderHourlyForDay(hourlyForDay, tz);
-	renderDaily();
-	renderSunMoonTracks(dayData, tz, dateForMoon);
-	renderSolarSystem(moonData.phase);
-	updateDataMeta();
-	syncMapToPlace();
-}
-
-function renderHourlyForDay(hourlyData, tz) {
-	el.hourlyList.innerHTML = '';
-	if (hourlyData.length === 0) {
-		el.hourlyList.innerHTML = `<div style="color: var(--muted); padding: 20px; text-align: center;">${t('noHourlyData')}</div>`;
-		return;
-	}
-	
-	// نمایش حداکثر 24 ساعت (برای امروز، داده‌ها در renderSelectedDay آماده‌سازی می‌شوند)
-	const filteredHourlyData = hourlyData.slice(0, 24);
-	
-	// دریافت طلوع و غروب برای بررسی دقیق شب/روز
-	const dayData = state.weather?.daily?.[state.selectedDayIndex];
-	let sunrise = null, sunset = null;
-	if (dayData?.sunrise && dayData?.sunset) {
-		sunrise = new Date(dayData.sunrise);
-		sunset = new Date(dayData.sunset);
-	}
-	
-	filteredHourlyData.forEach(h => {
-		const item = document.createElement('div');
-		item.className = 'hour';
-		const icon = document.createElement('div');
-		
-		// بررسی دقیق اینکه شب است یا روز
-		const hourDate = new Date(h.time);
-		let isNight = false;
-		
-		if (sunrise && sunset) {
-			// اگر اطلاعات طلوع و غروب داریم، دقیق بررسی می‌کنیم
-			isNight = hourDate < sunrise || hourDate > sunset;
-		} else {
-			// در غیر این صورت با ساعت محلی تخمین می‌زنیم
-			const localHour = tzDate(h.time, tz).getHours();
-			isNight = localHour < 6 || localHour >= 18;
-		}
-		
-		if (isNight) {
-			// شب - نمایش ماه
-			icon.className = 'wx-icon small';
-			icon.innerHTML = '';
-			const moonEmoji = document.createElement('div');
-			moonEmoji.style.fontSize = '32px';
-			moonEmoji.style.textAlign = 'center';
-			moonEmoji.textContent = '🌙';
-			icon.appendChild(moonEmoji);
-		} else {
-			// روز - نمایش آیکون آب و هوا
-			const info = weatherCodeToInfo(h.code, 1);
-			renderIcon(icon, info.key, 'small');
-		}
-		
-		const timeDiv = document.createElement('div');
-		timeDiv.className = 'time';
-		timeDiv.textContent = fmtTime(h.time, tz);
-		
-		const tempDiv = document.createElement('div');
-		tempDiv.className = 't';
-		tempDiv.textContent = fmtTemp(h.tempC);
-		
-		const precipDiv = document.createElement('div');
-		precipDiv.className = 'p';
-		precipDiv.textContent = h.precipProb != null ? fmtPercent(h.precipProb) : '';
-		
-		item.appendChild(timeDiv);
-		item.appendChild(icon);
-		item.appendChild(tempDiv);
-		item.appendChild(precipDiv);
-		el.hourlyList.appendChild(item);
-	});
-}
-
-function renderDaily() {
-	const tz = state.weather.timezone;
-	el.dailyList.innerHTML = '';
-	const days = state.currentDayView === 7 ? 7 : 14;
-	state.weather.daily.slice(0, days).forEach((d, idx) => {
-		const card = document.createElement('div'); 
-		card.className = 'day';
-		if (idx === state.selectedDayIndex) {
-			card.style.background = 'rgba(124,211,255,0.15)';
-			card.style.borderColor = 'rgba(124,211,255,0.5)';
-		}
-		card.style.cursor = 'pointer';
-	
-	// تشخیص scroll از click
-	let startY = 0;
-	let startTime = 0;
-	
-	card.addEventListener('touchstart', (e) => {
-		startY = e.touches[0].clientY;
-		startTime = Date.now();
-	}, { passive: true });
-	
-	card.addEventListener('touchend', (e) => {
-		const endY = e.changedTouches[0].clientY;
-		const endTime = Date.now();
-		const distance = Math.abs(endY - startY);
-		const duration = endTime - startTime;
-		
-		// اگر حرکت کمتر از 10 پیکسل و زمان کمتر از 500ms بود، کلیک محسوب می‌شود
-		if (distance < 10 && duration < 500) {
-			changeSelectedDay(idx);
-		}
-	}, { passive: true });
-	
-		card.addEventListener('click', (e) => {
-		// برای دسکتاپ (ماوس)
-		if (!e.touches) {
-			changeSelectedDay(idx);
-		}
-		});
-		
-		// محاسبه وضعیت کلی روز بر اساس میانگین شرایط ساعتی
-		const dayStr = d.time.split('T')[0];
-		const hourlyForDay = state.weather.hourly.filter(h => h.time.startsWith(dayStr));
-		const calculatedCode = calculateDailyWeatherCondition(hourlyForDay, d, tz);
-		
-		const icon = document.createElement('div');
-		const info = weatherCodeToInfo(calculatedCode, 1);
-		renderIcon(icon, info.key, 'small');
-		
-		const nameEl = document.createElement('div'); 
-		nameEl.className = 'name'; 
-		nameEl.textContent = idx === 0 ? t('today') : (idx === 1 ? t('tomorrow') : fmtDayName(d.time, tz));
-		
-		const dateEl = document.createElement('div'); 
-		dateEl.className = 'date'; 
-		dateEl.textContent = fmtDateShort(d.time, tz);
-		
-		const minmax = document.createElement('div'); 
-		minmax.className = 'minmax'; 
-		minmax.textContent = `${fmtTemp(d.maxC)} / ${fmtTemp(d.minC)}`;
-		
-		card.appendChild(nameEl); 
-		card.appendChild(dateEl); 
-		card.appendChild(icon); 
-		card.appendChild(minmax);
-		el.dailyList.appendChild(card);
-	});
-}
-
-function changeSelectedDay(dayIndex) {
-	state.selectedDayIndex = dayIndex;
-	
-	// ریست ساعت
-	if (dayIndex === 0) {
-		state.solarSystemHour = null;
-		const now = new Date();
-		if (el.solarSystemHour) {
-			el.solarSystemHour.value = now.getHours();
-			const hourStr = now.getHours().toString().padStart(2, '0');
-			const minStr = now.getMinutes().toString().padStart(2, '0');
-			if (el.solarSystemHourDisplay) {
-				el.solarSystemHourDisplay.textContent = `${formatNumber(hourStr)}:${formatNumber(minStr)}`;
-			}
-		}
-	} else {
-		state.solarSystemHour = 12;
-		if (el.solarSystemHour) {
-			el.solarSystemHour.value = 12;
-		}
-		if (el.solarSystemHourDisplay) {
-			el.solarSystemHourDisplay.textContent = `${formatNumber('12')}:${formatNumber('00')}`;
-		}
-	}
-	
-	renderSelectedDay();
-}
-
-function renderSunMoonTracks(dayData, tz, date) {
-	if (!dayData.sunrise || !dayData.sunset) return;
-	
-	// استفاده از timezone دقیق برای محاسبه زمان فعلی
-	const now = new Date();
-	const sr = new Date(dayData.sunrise);
-	const ss = new Date(dayData.sunset);
-	
-	// DEBUG: برای بررسی دقیق زمان‌ها
-	console.log('🌅 Debug Sun Position:');
-	console.log('Timezone:', tz);
-	console.log('Current Time (UTC):', now.toISOString());
-	console.log('Current Time (Local TZ):', now.toLocaleString('fa-IR', { timeZone: tz, hour12: false }));
-	console.log('Sunrise (UTC):', sr.toISOString(), '→ Local:', fmtTime(dayData.sunrise, tz));
-	console.log('Sunset (UTC):', ss.toISOString(), '→ Local:', fmtTime(dayData.sunset, tz));
-	console.log('Timestamps - Now:', now.getTime(), 'Sunrise:', sr.getTime(), 'Sunset:', ss.getTime());
-	console.log('Time comparisons:');
-	console.log('  now < sr:', now < sr, '(before sunrise)');
-	console.log('  now > ss:', now > ss, '(after sunset)');
-	console.log('  sr < now < ss:', now >= sr && now <= ss, '(sun is up)');
-	
-	// نمایش ساعت طلوع و غروب زیر ایموجی‌ها
-	const sunRiseLabel = document.getElementById('sunRiseTimeLabel');
-	const sunSetLabel = document.getElementById('sunSetTimeLabel');
-	if (sunRiseLabel) sunRiseLabel.textContent = fmtTime(dayData.sunrise, tz);
-	if (sunSetLabel) sunSetLabel.textContent = fmtTime(dayData.sunset, tz);
-	
-	// Sun position
-	const isToday = state.selectedDayIndex === 0;
-	let sunPercent = 0;
-	let sunStatusText = '';
-	
-	if (isToday) {
-		if (now < sr) {
-			sunPercent = 0;
-			const minutesUntil = Math.floor((sr - now) / 60000);
-			const hoursUntil = Math.floor(minutesUntil / 60);
-			const minsRemaining = minutesUntil % 60;
-			sunStatusText = `🌅 ${t('sunNotRisen')}\n${hoursUntil > 0 ? formatNumber(hoursUntil) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsRemaining)} ${t('minute')} ${t('untilRise')}`;
-		} else if (now > ss) {
-			sunPercent = 100;
-			const minutesSince = Math.floor((now - ss) / 60000);
-			const hoursSince = Math.floor(minutesSince / 60);
-			const minsSince = minutesSince % 60;
-			sunStatusText = `🌇 ${t('sunSet')}\n${hoursSince > 0 ? formatNumber(hoursSince) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsSince)} ${t('minute')} ${t('sinceSet')}`;
-		} else {
-			sunPercent = ((now - sr) / (ss - sr)) * 100;
-			const remaining = Math.floor((ss - now) / 60000);
-			const hoursLeft = Math.floor(remaining / 60);
-			const minsLeft = remaining % 60;
-			const elapsed = Math.floor((now - sr) / 60000);
-			const hoursElapsed = Math.floor(elapsed / 60);
-			const minsElapsed = elapsed % 60;
-			
-			// DEBUG
-			console.log('☀️ Sun is UP!');
-			console.log('Time since sunrise (ms):', now - sr);
-			console.log('Total day length (ms):', ss - sr);
-			console.log('Position %:', sunPercent);
-			
-			sunStatusText = `☀️ ${t('sunRisen')}\n${t('position')}: ${formatNumber(Math.round(sunPercent))}% ${t('ofPath')}\n${hoursLeft > 0 ? formatNumber(hoursLeft) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsLeft)} ${t('minute')} ${t('untilSet')} | ${hoursElapsed > 0 ? formatNumber(hoursElapsed) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsElapsed)} ${t('minute')} ${t('untilRise')}`;
-		}
-	} else {
-		sunPercent = 50;
-		const dayLengthHours = ((ss - sr) / 3600000).toFixed(1);
-		sunStatusText = `${t('dayLength')}: ${formatNumber(parseFloat(dayLengthHours))} ${t('hour')}`;
-	}
-	
-	// محاسبه موقعیت روی قوس (Quadratic Bezier Curve)
-	const bezierT = sunPercent / 100; // 0 to 1
-	const x0 = 50, y0 = 160;  // شروع (طلوع)
-	const xc = 300, yc = 30;  // نقطه کنترل (اوج)
-	const x1 = 550, y1 = 160; // پایان (غروب)
-	
-	const sunX = Math.pow(1 - bezierT, 2) * x0 + 2 * (1 - bezierT) * bezierT * xc + Math.pow(bezierT, 2) * x1;
-	const sunY = Math.pow(1 - bezierT, 2) * y0 + 2 * (1 - bezierT) * bezierT * yc + Math.pow(bezierT, 2) * y1;
-	
-	const sunMarker = document.getElementById('sunPositionMarker');
-	if (sunMarker) {
-		// خورشید را نمایش بده اگر امروز باشد و خورشید در آسمان باشد
-		const isSunVisible = isToday && now >= sr && now <= ss;
-		
-		if (!isSunVisible) {
-			sunMarker.style.display = 'none';
-		} else {
-			sunMarker.style.display = 'block';
-			
-			const circles = sunMarker.querySelectorAll('circle');
-			const sunEmoji = sunMarker.querySelector('text');
-			
-			// به‌روزرسانی موقعیت دایره‌ها
-			circles.forEach(circle => {
-				circle.setAttribute('cx', sunX);
-				circle.setAttribute('cy', sunY);
-			});
-			
-			// به‌روزرسانی موقعیت ایموجی خورشید
-			if (sunEmoji) {
-				sunEmoji.setAttribute('x', sunX);
-				sunEmoji.setAttribute('y', sunY + 13);
-			}
-			
-			// به‌روزرسانی زاویه خورشید
-			const sunAngleText = document.getElementById('sunAngleText');
-			if (sunAngleText && state.place) {
-				const sunAlt = calculateSunAltitude(now, state.place.lat, state.place.lon);
-				sunAngleText.setAttribute('x', sunX);
-				sunAngleText.setAttribute('y', sunY - 25);
-				sunAngleText.textContent = `${formatNumber(Math.round(Math.max(0, sunAlt.altitude)))}°`;
-			}
-			
-			// به‌روزرسانی باکس اطلاعات
-			const infoBox = document.getElementById('sunInfoBox');
-			if (infoBox) {
-				const rect = infoBox.querySelector('rect');
-				// قرار دادن باکس در سمت راست خورشید
-				const boxX = sunX + 10;
-				const boxY = sunY - 35;
-				rect.setAttribute('x', boxX);
-				rect.setAttribute('y', boxY);
-				
-				// به‌روزرسانی متن‌های داخل باکس
-				const percentText = document.getElementById('sunPercentText');
-				const timeLeftText = document.getElementById('sunTimeLeftText');
-				const altText = document.getElementById('sunAltText');
-				
-				if (percentText) {
-					percentText.setAttribute('x', boxX + 50);
-					percentText.setAttribute('y', boxY + 18);
-					percentText.textContent = `${formatNumber(Math.round(sunPercent))}% ${t('ofPath')}`;
-				}
-				
-				if (timeLeftText) {
-					timeLeftText.setAttribute('x', boxX + 50);
-					timeLeftText.setAttribute('y', boxY + 32);
-					const remaining = Math.floor((ss - now) / 60000);
-					const hoursLeft = Math.floor(remaining / 60);
-					const minsLeft = remaining % 60;
-					const hourUnit = currentLang === 'fa' ? 'س' : 'h';
-					const minUnit = currentLang === 'fa' ? 'د' : 'm';
-					const andWord = currentLang === 'fa' ? ' و ' : ' ';
-					const untilSet = currentLang === 'fa' ? 'تا غروب' : t('untilSet');
-					timeLeftText.textContent = `${hoursLeft > 0 ? formatNumber(hoursLeft) + hourUnit : ''}${hoursLeft > 0 ? andWord : ''}${formatNumber(minsLeft)}${minUnit} ${untilSet}`;
-				}
-				
-				if (altText && state.place) {
-					altText.setAttribute('x', boxX + 50);
-					altText.setAttribute('y', boxY + 46);
-					const sunAlt = calculateSunAltitude(now, state.place.lat, state.place.lon);
-					altText.textContent = `${t('altitude')}: ${formatNumber(Math.round(Math.max(0, sunAlt.altitude)))}°`;
-				}
-			}
-			
-			// نمایش با opacity کامل چون خورشید در آسمان است
-			sunMarker.style.opacity = '1';
-			
-			// افزودن event listener برای نمایش باکس اطلاعات با کلیک و hover (فقط یک بار)
-			if (!sunMarker.dataset.listenersAdded) {
-				sunMarker.style.cursor = 'pointer';
-				
-				// برای دسکتاپ: hover
-				sunMarker.addEventListener('mouseenter', () => {
-					const box = document.getElementById('sunInfoBox');
-					if (box) box.style.opacity = '1';
-				});
-				sunMarker.addEventListener('mouseleave', () => {
-					const box = document.getElementById('sunInfoBox');
-					const marker = document.getElementById('sunPositionMarker');
-					if (box && marker && !marker.dataset.clicked) box.style.opacity = '0';
-				});
-				
-				// برای موبایل: click/touch
-				sunMarker.addEventListener('click', (e) => {
-					e.stopPropagation();
-					const box = document.getElementById('sunInfoBox');
-					const marker = document.getElementById('sunPositionMarker');
-					if (box && marker) {
-						const isVisible = box.style.opacity === '1';
-						box.style.opacity = isVisible ? '0' : '1';
-						marker.dataset.clicked = isVisible ? '' : 'true';
-					}
-				});
-				
-				sunMarker.dataset.listenersAdded = 'true';
-			}
-		}
-	}
-	
-	// محاسبه و نمایش altitude/azimuth خورشید
-	if (state.place && isToday) {
-		const sunAlt = calculateSunAltitude(now, state.place.lat, state.place.lon);
-		const altStr = `${t('altitude')}: ${formatNumber(Math.round(sunAlt.altitude))}°`;
-		const azStr = `${t('azimuth')}: ${formatNumber(Math.round(sunAlt.azimuth))}°`;
-		sunStatusText += `\n${altStr} | ${azStr}`;
-		
-		// رسم قوس ارتفاع
-		if (el.sunAltitudeArc) {
-			renderAltitudeArc(el.sunAltitudeArc, sunAlt.altitude, '#ffa500');
-		}
-	}
-	
-	el.sunStatus.textContent = sunStatusText;
-	
-	// Moon - محاسبه دقیق طلوع و غروب
-	const moonTimes = getMoonRiseSet(date, state.place.lat, state.place.lon);
-	
-	// نمایش ساعت طلوع و غروب زیر ایموجی‌های ماه
-	const moonRiseLabel = document.getElementById('moonRiseTimeLabel');
-	const moonSetLabel = document.getElementById('moonSetTimeLabel');
-	if (moonRiseLabel) moonRiseLabel.textContent = fmtTime(moonTimes.moonrise, tz);
-	if (moonSetLabel) moonSetLabel.textContent = fmtTime(moonTimes.moonset, tz);
-	
-	const mr = new Date(moonTimes.moonrise);
-	const ms = new Date(moonTimes.moonset);
-	let moonPercent = 50;
-	let moonStatusText = '';
-	
-	if (isToday) {
-		if (now < mr) {
-			moonPercent = 0;
-			const minutesUntil = Math.floor((mr - now) / 60000);
-			const hoursUntil = Math.floor(minutesUntil / 60);
-			const minsRemaining = minutesUntil % 60;
-			moonStatusText = `🌜 ${t('moonNotRisen')}\n${hoursUntil > 0 ? formatNumber(hoursUntil) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsRemaining)} ${t('minute')} ${t('untilRise')}`;
-		} else if (now > ms) {
-			moonPercent = 100;
-			const minutesSince = Math.floor((now - ms) / 60000);
-			const hoursSince = Math.floor(minutesSince / 60);
-			const minsSince = minutesSince % 60;
-			moonStatusText = `🌛 ${t('moonSet')}\n${hoursSince > 0 ? formatNumber(hoursSince) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsSince)} ${t('minute')} ${t('sinceSet')}`;
-		} else {
-			moonPercent = ((now - mr) / (ms - mr)) * 100;
-			const remaining = Math.floor((ms - now) / 60000);
-			const hoursLeft = Math.floor(remaining / 60);
-			const minsLeft = remaining % 60;
-			const elapsed = Math.floor((now - mr) / 60000);
-			const hoursElapsed = Math.floor(elapsed / 60);
-			const minsElapsed = elapsed % 60;
-			moonStatusText = `🌙 ${t('moonRisen')}\n${t('position')}: ${formatNumber(Math.round(moonPercent))}% ${t('ofPath')}\n${hoursLeft > 0 ? formatNumber(hoursLeft) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsLeft)} ${t('minute')} ${t('untilSet')} | ${hoursElapsed > 0 ? formatNumber(hoursElapsed) + ' ' + t('hour') + ' ' + t('and') + ' ' : ''}${formatNumber(minsElapsed)} ${t('minute')} ${t('untilRise')}`;
-		}
-	} else {
-		moonPercent = 50;
-		const moonLengthHours = ((ms - mr) / 3600000).toFixed(1);
-		moonStatusText = `${t('moonDuration')}: ${formatNumber(parseFloat(moonLengthHours))} ${t('hour')}`;
-	}
-	
-	// محاسبه موقعیت ماه روی قوس (Quadratic Bezier Curve) - استفاده از همان مختصات
-	const bezierTMoon = moonPercent / 100; // 0 to 1
-	const moonX = Math.pow(1 - bezierTMoon, 2) * x0 + 2 * (1 - bezierTMoon) * bezierTMoon * xc + Math.pow(bezierTMoon, 2) * x1;
-	const moonY = Math.pow(1 - bezierTMoon, 2) * y0 + 2 * (1 - bezierTMoon) * bezierTMoon * yc + Math.pow(bezierTMoon, 2) * y1;
-	
-	const moonMarker = document.getElementById('moonPositionMarker');
-	if (moonMarker) {
-		// ماه را نمایش بده اگر امروز باشد و ماه در آسمان باشد
-		const isMoonVisible = isToday && now >= mr && now <= ms;
-		
-		if (!isMoonVisible) {
-			moonMarker.style.display = 'none';
-		} else {
-			moonMarker.style.display = 'block';
-			
-			const circles = moonMarker.querySelectorAll('circle');
-			const moonEmoji = moonMarker.querySelector('text');
-			
-			// به‌روزرسانی موقعیت دایره‌ها
-			circles.forEach(circle => {
-				circle.setAttribute('cx', moonX);
-				circle.setAttribute('cy', moonY);
-			});
-			
-			// به‌روزرسانی موقعیت ایموجی ماه
-			if (moonEmoji) {
-				moonEmoji.setAttribute('x', moonX);
-				moonEmoji.setAttribute('y', moonY + 12);
-			}
-			
-			// به‌روزرسانی زاویه ماه
-			const moonAngleText = document.getElementById('moonAngleText');
-			if (moonAngleText && state.place) {
-				const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon);
-				moonAngleText.setAttribute('x', moonX);
-				moonAngleText.setAttribute('y', moonY - 25);
-				moonAngleText.textContent = `${formatNumber(Math.round(Math.max(0, moonAlt.altitude)))}°`;
-			}
-			
-			// به‌روزرسانی باکس اطلاعات
-			const moonInfoBoxEl = document.getElementById('moonInfoBox');
-			if (moonInfoBoxEl) {
-				const rect = moonInfoBoxEl.querySelector('rect');
-				// قرار دادن باکس در سمت راست ماه
-				const boxX = moonX + 10;
-				const boxY = moonY - 35;
-				rect.setAttribute('x', boxX);
-				rect.setAttribute('y', boxY);
-				
-				// به‌روزرسانی متن‌های داخل باکس
-				const percentText = document.getElementById('moonPercentText');
-				const timeLeftText = document.getElementById('moonTimeLeftText');
-				const phaseText = document.getElementById('moonPhaseText');
-				
-				if (percentText) {
-					percentText.setAttribute('x', boxX + 50);
-					percentText.setAttribute('y', boxY + 18);
-					percentText.textContent = `${formatNumber(Math.round(moonPercent))}% ${t('ofPath')}`;
-				}
-				
-				if (timeLeftText) {
-					timeLeftText.setAttribute('x', boxX + 50);
-					timeLeftText.setAttribute('y', boxY + 32);
-					const remaining = Math.floor((ms - now) / 60000);
-					const hoursLeft = Math.floor(remaining / 60);
-					const minsLeft = remaining % 60;
-					const hourUnit = currentLang === 'fa' ? 'س' : 'h';
-					const minUnit = currentLang === 'fa' ? 'د' : 'm';
-					const andWord = currentLang === 'fa' ? ' و ' : ' ';
-					const untilSet = currentLang === 'fa' ? 'تا غروب' : t('untilSet');
-					timeLeftText.textContent = `${hoursLeft > 0 ? formatNumber(hoursLeft) + hourUnit : ''}${hoursLeft > 0 ? andWord : ''}${formatNumber(minsLeft)}${minUnit} ${untilSet}`;
-				}
-				
-				if (phaseText) {
-					phaseText.setAttribute('x', boxX + 50);
-					phaseText.setAttribute('y', boxY + 46);
-					const moonData = getMoonPhase(date);
-					phaseText.textContent = moonData.name;
-				}
-			}
-			
-			// نمایش با opacity کامل چون ماه در آسمان است
-			moonMarker.style.opacity = '1';
-			
-			// افزودن event listener برای نمایش باکس اطلاعات با کلیک و hover (فقط یک بار)
-			if (!moonMarker.dataset.listenersAdded) {
-				moonMarker.style.cursor = 'pointer';
-				
-				// برای دسکتاپ: hover
-				moonMarker.addEventListener('mouseenter', () => {
-					const box = document.getElementById('moonInfoBox');
-					if (box) box.style.opacity = '1';
-				});
-				moonMarker.addEventListener('mouseleave', () => {
-					const box = document.getElementById('moonInfoBox');
-					const marker = document.getElementById('moonPositionMarker');
-					if (box && marker && !marker.dataset.clicked) box.style.opacity = '0';
-				});
-				
-				// برای موبایل: click/touch
-				moonMarker.addEventListener('click', (e) => {
-					e.stopPropagation();
-					const box = document.getElementById('moonInfoBox');
-					const marker = document.getElementById('moonPositionMarker');
-					if (box && marker) {
-						const isVisible = box.style.opacity === '1';
-						box.style.opacity = isVisible ? '0' : '1';
-						marker.dataset.clicked = isVisible ? '' : 'true';
-					}
-				});
-				
-				moonMarker.dataset.listenersAdded = 'true';
-			}
-		}
-	}
-	
-	// محاسبه و نمایش altitude/azimuth ماه
-	if (state.place && isToday) {
-		const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon);
-		const altStr = `${t('altitude')}: ${formatNumber(Math.round(moonAlt.altitude))}°`;
-		const azStr = `${t('azimuth')}: ${formatNumber(Math.round(moonAlt.azimuth))}°`;
-		moonStatusText += `\n${altStr} | ${azStr}`;
-		
-		// رسم قوس ارتفاع
-		if (el.moonAltitudeArc) {
-			renderAltitudeArc(el.moonAltitudeArc, moonAlt.altitude, '#87ceeb');
-		}
-	}
-	
-	el.moonStatus.textContent = moonStatusText;
-	
-	// Moon visual
-	const moonData = getMoonPhase(date);
-	el.moonPhaseNameBig.textContent = moonData.name;
-	el.moonIllumination.textContent = `${t('illuminationLabel')}: ${formatNumber(moonData.illumination)}% | ${t('ageLabel')}: ${formatNumber(Math.round(moonData.moonAge))} ${t('day')}`;
-	renderMoonPhase(moonData);
-	
-	// پر کردن جزئیات کامل خورشید و ماه
-	updateSunDetails(sr, ss, date, isToday, now, tz);
-	updateMoonDetails(moonData, moonTimes, mr, ms, date, isToday, now, tz);
-}
-
-// به‌روزرسانی جزئیات کامل خورشید
-function updateSunDetails(sr, ss, date, isToday, now, tz) {
-	// 1. طلوع خورشید
-	const riseDetail = document.getElementById('sunRiseDetail');
-	if (riseDetail) riseDetail.textContent = fmtTime(sr.toISOString(), tz);
-	
-	// 2. غروب خورشید
-	const setDetail = document.getElementById('sunSetDetail');
-	if (setDetail) setDetail.textContent = fmtTime(ss.toISOString(), tz);
-	
-	// 3. طول روز
-	const dayLengthDetail = document.getElementById('sunDayLengthDetail');
-	if (dayLengthDetail) {
-		const durationMs = ss - sr;
-		const hours = Math.floor(durationMs / 3600000);
-		const minutes = Math.floor((durationMs % 3600000) / 60000);
-		dayLengthDetail.textContent = `${formatNumber(hours)} ${t('hour')} ${t('and')} ${formatNumber(minutes)} ${t('minute')}`;
-	}
-	
-	// 4. اوج خورشید (Solar Noon) - وسط بین طلوع و غروب
-	const solarNoonDetail = document.getElementById('sunSolarNoonDetail');
-	if (solarNoonDetail) {
-		const solarNoonTime = new Date((sr.getTime() + ss.getTime()) / 2);
-		solarNoonDetail.textContent = fmtTime(solarNoonTime.toISOString(), tz);
-	}
-	
-	// 5. زاویه خورشید (Altitude)
-	const altitudeDetail = document.getElementById('sunAltitudeDetail');
-	if (altitudeDetail && state.place && isToday) {
-		const sunAlt = calculateSunAltitude(now, state.place.lat, state.place.lon);
-		altitudeDetail.textContent = `${formatNumber(Math.round(Math.max(0, sunAlt.altitude)))}°`;
-	} else if (altitudeDetail) {
-		altitudeDetail.textContent = '—';
-	}
-	
-	// 6. سمت خورشید (Azimuth)
-	const azimuthDetail = document.getElementById('sunAzimuthDetail');
-	if (azimuthDetail && state.place && isToday) {
-		const sunAlt = calculateSunAltitude(now, state.place.lat, state.place.lon);
-		azimuthDetail.textContent = `${formatNumber(Math.round(sunAlt.azimuth))}°`;
-	} else if (azimuthDetail) {
-		azimuthDetail.textContent = '—';
-	}
-	
-	// 7. حداکثر ارتفاع (در زمان solar noon)
-	const maxAltitudeDetail = document.getElementById('sunMaxAltitudeDetail');
-	if (maxAltitudeDetail && state.place) {
-		const solarNoonTime = new Date((sr.getTime() + ss.getTime()) / 2);
-		const maxSunAlt = calculateSunAltitude(solarNoonTime, state.place.lat, state.place.lon);
-		maxAltitudeDetail.textContent = `${formatNumber(Math.round(Math.max(0, maxSunAlt.altitude)))}°`;
-	} else if (maxAltitudeDetail) {
-		maxAltitudeDetail.textContent = '—';
-	}
-	
-	// 8. فاصله از خورشید (تقریباً 1 AU = 149,597,870.7 km)
-	// می‌توانیم یک محاسبه ساده برای تغییر فاصله در طول سال انجام دهیم
-	const distanceDetail = document.getElementById('sunDistanceDetail');
-	if (distanceDetail) {
-		// محاسبه فاصله زمین از خورشید بر اساس روز سال
-		const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
-		// زمین در حضیض (نزدیک‌ترین به خورشید) در اوایل ژانویه و در اوج (دورترین) در اوایل ژوئیه
-		const eccentricity = 0.0167; // اختلاف مداری زمین
-		const meanDistance = 149597870.7; // km
-		// تقریب ساده بر اساس روز سال
-		const angleRad = ((dayOfYear - 3) * 2 * Math.PI) / 365.25; // 3 ژانویه = حضیض تقریبی
-		const distance = meanDistance * (1 - eccentricity * Math.cos(angleRad));
-		
-		distanceDetail.textContent = `${formatNumber(Math.round(distance))} ${t('km')}`;
-	}
-}
-
-// به‌روزرسانی جزئیات کامل ماه
-function updateMoonDetails(moonData, moonTimes, mr, ms, date, isToday, now, tz) {
-	// 1. فاز ماه
-	const phaseDetail = document.getElementById('moonPhaseDetail');
-	if (phaseDetail) phaseDetail.textContent = moonData.name;
-	
-	// 2. روشنایی
-	const illuminationDetail = document.getElementById('moonIlluminationDetail');
-	if (illuminationDetail) illuminationDetail.textContent = `${formatNumber(moonData.illumination)}%`;
-	
-	// 3. عمر ماه
-	const ageDetail = document.getElementById('moonAgeDetail');
-	if (ageDetail) ageDetail.textContent = `${formatNumber(parseFloat(moonData.moonAge.toFixed(2)))} ${t('day')}`;
-	
-	// 4. طلوع ماه
-	const riseDetail = document.getElementById('moonRiseDetail');
-	if (riseDetail) riseDetail.textContent = fmtTime(moonTimes.moonrise, tz);
-	
-	// 5. غروب ماه
-	const setDetail = document.getElementById('moonSetDetail');
-	if (setDetail) setDetail.textContent = fmtTime(moonTimes.moonset, tz);
-	
-	// 6. مدت حضور (Duration)
-	const durationDetail = document.getElementById('moonDurationDetail');
-	if (durationDetail) {
-		const durationMs = ms - mr;
-		const hours = Math.floor(durationMs / 3600000);
-		const minutes = Math.floor((durationMs % 3600000) / 60000);
-		durationDetail.textContent = `${formatNumber(hours)} ${t('hour')} ${t('and')} ${formatNumber(minutes)} ${t('minute')}`;
-	}
-	
-	// 7. زاویه ماه (Altitude)
-	const altitudeDetail = document.getElementById('moonAltitudeDetail');
-	if (altitudeDetail && state.place && isToday) {
-		const moonAlt = calculateMoonAltitude(now, state.place.lat, state.place.lon);
-		altitudeDetail.textContent = `${formatNumber(Math.round(Math.max(0, moonAlt.altitude)))}°`;
-	} else if (altitudeDetail) {
-		altitudeDetail.textContent = '—';
-	}
-	
-	// 8. فاصله از زمین
-	const distanceDetail = document.getElementById('moonDistanceDetail');
-	if (distanceDetail) {
-		const distance = calculateMoonDistance(date);
-		distanceDetail.textContent = `${formatNumber(Math.round(distance))} ${t('km')}`;
-	}
-}
-
-function renderMoonPhase(moonData) {
-	const { phase, moonAge, illumination } = moonData;
-	
-	// پایه ماه با دهانه‌ها و دریاها
-	const moonBase = 'radial-gradient(circle at 38% 35%, #e8e8e8 0%, #d5d5d5 20%, #a8a8a8 60%, #7a7a7a 85%, #5a5a5a 100%)';
-	
-	console.log('🎨 Rendering Moon Phase:', moonAge.toFixed(2), 'days, illumination:', illumination + '%');
-	
-	// محاسبه سایه بر اساس Moon Age دقیق
-	const dayInCycle = moonAge; // 0-29.53 روز
-	
-	// ماه نو (New Moon) - روزهای 0-1 و 28-29
-	if (dayInCycle < 1 || dayInCycle > 28.5) {
-		el.moonCanvas.style.background = `
-			radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 100%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 20px rgba(100,120,150,0.2), inset 0 0 60px rgba(0,0,0,0.9)';
-	}
-	// هلال اول (Waxing Crescent) - روزهای 1-7
-	else if (dayInCycle < 7) {
-		// سایه از راست به چپ کم می‌شود
-		const shadowPercent = 100 - (dayInCycle / 7) * 100;
-		el.moonCanvas.style.background = `
-			radial-gradient(ellipse ${shadowPercent}% 100% at 100% 50%, rgba(0,0,0,0.92) 0%, transparent 50%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 30px rgba(200,220,255,0.3), inset -20px -15px 40px rgba(0,0,0,0.7)';
-	}
-	// تربیع اول (First Quarter) - روز 7-8
-	else if (dayInCycle < 8) {
-		el.moonCanvas.style.background = `
-			linear-gradient(90deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.88) 49%, transparent 50%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 35px rgba(200,220,255,0.4), inset -15px -15px 35px rgba(0,0,0,0.6)';
-	}
-	// احدب اول (Waxing Gibbous) - روزهای 8-14
-	else if (dayInCycle < 14) {
-		// سایه از چپ کم می‌شود
-		const shadowPercent = 100 - ((dayInCycle - 7) / 7) * 100;
-		el.moonCanvas.style.background = `
-			radial-gradient(ellipse ${shadowPercent}% 100% at 0% 50%, rgba(0,0,0,0.85) 0%, transparent 50%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 40px rgba(200,220,255,0.45), inset -12px -12px 30px rgba(0,0,0,0.5)';
-	}
-	// بدر (Full Moon) - روزهای 14-16
-	else if (dayInCycle < 16) {
-		el.moonCanvas.style.background = moonBase;
-		el.moonCanvas.style.boxShadow = '0 0 60px rgba(200,220,255,0.7), inset -10px -10px 25px rgba(0,0,0,0.3), inset 5px 5px 20px rgba(255,255,255,0.2)';
-	}
-	// احدب دوم (Waning Gibbous) - روزهای 16-22
-	else if (dayInCycle < 22) {
-		// سایه از راست شروع می‌شود
-		const shadowPercent = ((dayInCycle - 15) / 7) * 100;
-		el.moonCanvas.style.background = `
-			radial-gradient(ellipse ${shadowPercent}% 100% at 100% 50%, rgba(0,0,0,0.85) 0%, transparent 50%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 40px rgba(200,220,255,0.45), inset 12px -12px 30px rgba(0,0,0,0.5)';
-	}
-	// تربیع دوم (Last Quarter) - روز 22-23
-	else if (dayInCycle < 23) {
-		el.moonCanvas.style.background = `
-			linear-gradient(270deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.88) 49%, transparent 50%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 35px rgba(200,220,255,0.4), inset 15px -15px 35px rgba(0,0,0,0.6)';
-	}
-	// هلال دوم (Waning Crescent) - روزهای 23-29
-	else {
-		// سایه از چپ بیشتر می‌شود
-		const shadowPercent = ((dayInCycle - 22) / 7) * 100;
-		el.moonCanvas.style.background = `
-			radial-gradient(ellipse ${shadowPercent}% 100% at 0% 50%, rgba(0,0,0,0.92) 0%, transparent 50%),
-			${moonBase}
-		`;
-		el.moonCanvas.style.boxShadow = '0 0 30px rgba(200,220,255,0.3), inset 20px -15px 40px rgba(0,0,0,0.7)';
-	}
-}
-
-function updatePlanetInfoBox(planetName, pos, currentDate, locale, hour12) {
-	if (!el.planetInfoBox) return;
-
-	if (!pos) {
-		el.planetInfoBox.innerHTML = `
-			<div class="planet-info-title">${t('solarPickPlanet')}</div>
-			<div class="planet-info-sub">${t('solarPickPlanetHint')}</div>
-		`;
-		return;
-	}
-
-	const distanceAU = Number(pos.distance.toFixed(3));
-	const distanceMKM = Number((pos.distance * 149.6).toFixed(1));
-	const zLabel = pos.z >= 0 ? t('abovePlane') : t('belowPlane');
-
-	el.planetInfoBox.innerHTML = `
-		<div class="planet-info-head">
-			<div class="planet-info-title">${planetName}</div>
-			<div class="planet-info-sub">${currentDate.toLocaleDateString(locale)} • ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}</div>
-		</div>
-		<div class="planet-info-grid">
-			<div class="pi-item">
-				<div class="pi-k">${t('distance')}</div>
-				<div class="pi-v">${formatNumber(distanceAU)} AU</div>
-				<div class="pi-s">${formatNumber(distanceMKM)} ${t('millionKm')}</div>
-			</div>
-			<div class="pi-item">
-				<div class="pi-k">${t('solarCoords')}</div>
-				<div class="pi-v">X ${formatNumber(Number(pos.x.toFixed(3)))} • Y ${formatNumber(Number(pos.y.toFixed(3)))} • Z ${formatNumber(Number(pos.z.toFixed(3)))}</div>
-				<div class="pi-s">${zLabel}</div>
-			</div>
-		</div>
-		<div class="planet-info-foot">
-			💡 <span>${t('solarSystemNote1')}</span>
-		</div>
-	`;
-}
-
-function renderSolarSystem(moonPhase) {
-	el.solarSystem.innerHTML = '';
-	
-	// تنظیم locale برای تمام تابع
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	const hour12 = currentLang !== 'fa';
-	
-	// محاسبه تاریخ دقیق
-	const selectedDayData = state.weather?.daily?.[state.selectedDayIndex];
-	let currentDate;
-	if (selectedDayData && state.place) {
-		const tz = state.weather.timezone;
-		const dateStr = selectedDayData.time;
-		currentDate = new Date(new Date(dateStr).toLocaleString('en-US', { timeZone: tz }));
-		
-		if (state.solarSystemHour !== null) {
-			currentDate.setHours(state.solarSystemHour, 0, 0, 0);
-		} else if (state.selectedDayIndex === 0) {
-			const now = new Date();
-			currentDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-		} else {
-			currentDate.setHours(12, 0, 0, 0);
-		}
-	} else {
-		currentDate = new Date();
-		if (state.solarSystemHour !== null) {
-			currentDate.setHours(state.solarSystemHour, 0, 0, 0);
-		}
-	}
-	
-	const sun = document.createElement('div');
-	sun.className = 'sun-center';
-	sun.title = `${t('sun')} - ${currentDate.toLocaleDateString(locale)} ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}`;
-	el.solarSystem.appendChild(sun);
-	
-	const planets = [
-		{ nameKey: 'mercury', cls: 'mercury', key: 'mercury', orbitRadius: 0.387, displayRadius: 35, size: 10 },
-		{ nameKey: 'venus', cls: 'venus', key: 'venus', orbitRadius: 0.723, displayRadius: 55, size: 14 },
-		{ nameKey: 'earth', cls: 'earth', key: 'earth', orbitRadius: 1.000, displayRadius: 70, size: 16, hasMoon: true },
-		{ nameKey: 'mars', cls: 'mars', key: 'mars', orbitRadius: 1.524, displayRadius: 90, size: 13 },
-		{ nameKey: 'jupiter', cls: 'jupiter', key: 'jupiter', orbitRadius: 5.203, displayRadius: 160, size: 28 },
-		{ nameKey: 'saturn', cls: 'saturn', key: 'saturn', orbitRadius: 9.537, displayRadius: 220, size: 24 },
-		{ nameKey: 'uranus', cls: 'uranus', key: 'uranus', orbitRadius: 19.191, displayRadius: 280, size: 20 },
-		{ nameKey: 'neptune', cls: 'neptune', key: 'neptune', orbitRadius: 30.069, displayRadius: 340, size: 18 },
-	];
-	
-	const zoom = state.solarSystemZoom || 1.0;
-	if (!selectedPlanetKey) selectedPlanetKey = 'earth';
-	let selectedPlanetPos = null;
-	let selectedPlanetName = null;
-	
-	planets.forEach(p => {
-		const orbit = document.createElement('div');
-		orbit.className = 'planet-orbit';
-		const orbitSize = p.displayRadius * 2 * zoom;
-		orbit.style.width = orbit.style.height = `${orbitSize}px`;
-		el.solarSystem.appendChild(orbit);
-		
-		// محاسبه موقعیت واقعی نجومی
-		const pos = calculatePlanetPosition(p.key, currentDate);
-		const scale = (p.displayRadius / p.orbitRadius) * zoom;
-		const x = pos.x * scale;
-		const y = -pos.y * scale; // معکوس کردن Y برای تطابق با CSS (بالا منفی است)
-		
-		const planetName = t(p.nameKey);
-		
-		const planet = document.createElement('div');
-		planet.className = `planet ${p.cls}`;
-		planet.dataset.key = p.key;
-		planet.tabIndex = 0;
-		planet.setAttribute('role', 'button');
-		planet.setAttribute('aria-label', planetName);
-		planet.style.left = `calc(50% + ${x}px - ${p.size/2}px)`;
-		planet.style.top = `calc(50% + ${y}px - ${p.size/2}px)`;
-		
-		// تنظیم z-index و opacity بر اساس موقعیت Z
-		// سیاراتی که z منفی دارند پشت خورشید هستند
-		if (pos.z < 0) {
-			// سیاره پشت خورشید (زیر صفحه)
-			planet.style.zIndex = '5';
-			const opacity = 1.0 - Math.abs(pos.z) * 0.2;
-			planet.style.opacity = Math.max(0.6, Math.min(1.0, opacity)).toString();
-		} else {
-			// سیاره جلوی خورشید (بالای صفحه)
-			planet.style.zIndex = '15';
-			const opacity = 1.0 - Math.abs(pos.z) * 0.1;
-			planet.style.opacity = Math.max(0.85, Math.min(1.0, opacity)).toString();
-		}
-		
-		const distanceAU = pos.distance.toFixed(2);
-		const distanceMKM = (pos.distance * 149.6).toFixed(1);
-		planet.title = `${planetName}\n${t('distance')}: ${formatNumber(parseFloat(distanceAU))} AU (${formatNumber(parseFloat(distanceMKM))} ${t('millionKm')})\n${t('date')}: ${currentDate.toLocaleDateString(locale)} ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}`;
-		
-		const label = document.createElement('div');
-		label.className = 'planet-label';
-		label.textContent = planetName;
-		planet.appendChild(label);
-		
-		el.solarSystem.appendChild(planet);
-
-		const selectThisPlanet = () => {
-			selectedPlanetKey = p.key;
-			selectedPlanetPos = pos;
-			selectedPlanetName = planetName;
-			el.solarSystem.querySelectorAll('.planet[data-key]').forEach(node => {
-				node.classList.toggle('selected', node.dataset.key === selectedPlanetKey);
-			});
-			updatePlanetInfoBox(selectedPlanetName, selectedPlanetPos, currentDate, locale, hour12);
-		};
-		planet.addEventListener('click', selectThisPlanet);
-		planet.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				selectThisPlanet();
-			}
-		});
-		
-		if (p.hasMoon) {
-			const moon = document.createElement('div');
-			moon.className = 'planet moon';
-			const moonAngle = moonPhase * Math.PI * 2;
-			const moonDist = 18;
-			const mx = Math.cos(moonAngle) * moonDist;
-			const my = Math.sin(moonAngle) * moonDist;
-			moon.style.left = `${mx}px`;
-			moon.style.top = `${my}px`;
-			moon.title = t('moon');
-			planet.appendChild(moon);
-		}
-
-		if (p.key === selectedPlanetKey) {
-			planet.classList.add('selected');
-			selectedPlanetPos = pos;
-			selectedPlanetName = planetName;
-		}
-	});
-	
-	// برچسب تاریخ
-	const dateLabel = document.createElement('div');
-	dateLabel.className = 'solar-date-label';
-	dateLabel.textContent = `${currentDate.toLocaleDateString(locale)} - ${currentDate.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12 })}`;
-	el.solarSystem.appendChild(dateLabel);
-
-	if (selectedPlanetName && selectedPlanetPos) {
-		updatePlanetInfoBox(selectedPlanetName, selectedPlanetPos, currentDate, locale, hour12);
-	}
-}
-
-// Historical charts
-async function loadHistoricalData(period = 'week') {
-	if (!state.place) return;
-	
-	console.log(`📊 Loading historical data for period: ${period}`);
-	
-	const data = await fetchHistoricalData(state.place.lat, state.place.lon, period);
-	
-	if (!data) {
-		console.warn('⚠️ No historical data received');
-		showToast(t('noHistoricalData') || 'داده‌های تاریخی در دسترس نیست');
-		// نمایش پیغام خالی در نمودارها
-		state.historyData = null;
-		renderPrecipChart(null);
-		renderTempChart(null);
-		renderHistoryStats(null);
-		renderTempHistoryStats(null);
-		return;
-	}
-	
-	console.log('✅ Historical data loaded successfully:', data.time?.length, 'days');
-	state.historyData = data;
-	renderPrecipChart(data);
-	renderTempChart(data);
-	renderHistoryStats(data);
-	renderTempHistoryStats(data);
-}
-
-function renderTempHistoryStats(data) {
-	if (!el.tempHistoryStats) return;
-
-	if (!data || !data.temperature_2m_max || !data.temperature_2m_min || !data.time) {
-		el.tempHistoryStats.innerHTML = `
-			<div style="text-align: center; color: var(--muted); padding: 20px;">
-				${t('noData') || 'داده‌ای موجود نیست'}
-			</div>
-		`;
-		return;
-	}
-
-	const maxArr = data.temperature_2m_max;
-	const minArr = data.temperature_2m_min;
-	const timeArr = data.time;
-	if (maxArr.length === 0 || minArr.length === 0 || timeArr.length === 0) return;
-
-	const avgMax = maxArr.reduce((a, b) => a + (b ?? 0), 0) / maxArr.length;
-	const avgMin = minArr.reduce((a, b) => a + (b ?? 0), 0) / minArr.length;
-
-	let hottest = -Infinity;
-	let hottestIdx = 0;
-	maxArr.forEach((v, idx) => {
-		if (v == null) return;
-		if (v > hottest) { hottest = v; hottestIdx = idx; }
-	});
-
-	let coldest = Infinity;
-	let coldestIdx = 0;
-	minArr.forEach((v, idx) => {
-		if (v == null) return;
-		if (v < coldest) { coldest = v; coldestIdx = idx; }
-	});
-
-	const tz = state.weather?.timezone || undefined;
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	const hottestDate = new Date(timeArr[hottestIdx]).toLocaleDateString(locale, { month: 'short', day: 'numeric', ...(tz ? { timeZone: tz } : {}) });
-	const coldestDate = new Date(timeArr[coldestIdx]).toLocaleDateString(locale, { month: 'short', day: 'numeric', ...(tz ? { timeZone: tz } : {}) });
-
-	el.tempHistoryStats.innerHTML = `
-		<div class="stat-item">
-			<div class="stat-label">${t('avgMax')}</div>
-			<div class="stat-value">${fmtTemp(avgMax)}</div>
-		</div>
-		<div class="stat-item">
-			<div class="stat-label">${t('avgMin')}</div>
-			<div class="stat-value">${fmtTemp(avgMin)}</div>
-		</div>
-		<div class="stat-item">
-			<div class="stat-label">${t('warmestDay')}</div>
-			<div class="stat-value">${fmtTemp(hottest)} <span style="color:var(--muted);font-size:12px;font-weight:600">(${hottestDate})</span></div>
-		</div>
-		<div class="stat-item">
-			<div class="stat-label">${t('coldestDay')}</div>
-			<div class="stat-value">${fmtTemp(coldest)} <span style="color:var(--muted);font-size:12px;font-weight:600">(${coldestDate})</span></div>
-		</div>
-	`;
-}
-
-function renderPrecipChart(data) {
-	const ctx = el.precipChart.getContext('2d');
-	if (precipChartInstance) precipChartInstance.destroy();
-	
-	const chartContainer = el.precipChart.parentElement;
-	
-	// بررسی اینکه data معتبر هست
-	if (!data || !data.time || !data.time.length) {
-		console.warn('⚠️ No data available for precipitation chart');
-		el.precipChart.style.display = 'none';
-		
-		// نمایش پیغام در container
-		let noDataMsg = chartContainer.querySelector('.no-data-message');
-		if (!noDataMsg) {
-			noDataMsg = document.createElement('div');
-			noDataMsg.className = 'no-data-message';
-			noDataMsg.style.cssText = 'text-align: center; padding: 40px 20px; color: var(--muted); font-size: 14px;';
-			chartContainer.appendChild(noDataMsg);
-		}
-		noDataMsg.textContent = t('noHistoricalData') || 'داده‌های تاریخی در دسترس نیست';
-		return;
-	}
-	
-	// حذف پیغام no-data اگر وجود داشته باشد
-	const noDataMsg = chartContainer.querySelector('.no-data-message');
-	if (noDataMsg) noDataMsg.remove();
-	
-	el.precipChart.style.display = 'block';
-	
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	const labels = data.time.map(t => {
-		const d = new Date(t);
-		return d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
-	});
-	
-	precipChartInstance = new Chart(ctx, {
-		type: 'bar',
-		data: {
-			labels,
-			datasets: [{
-				label: t('precipitation') + ' (mm)',
-				data: data.precipitation_sum || [],
-				backgroundColor: 'rgba(124, 211, 255, 0.5)',
-				borderColor: 'rgba(124, 211, 255, 1)',
-				borderWidth: 1,
-			}]
-		},
-		options: {
-			responsive: true,
-			maintainAspectRatio: false,
-			plugins: {
-				legend: { labels: { color: '#e9edf3', font: { family: 'Vazirmatn' } } },
-			},
-			scales: {
-				y: { 
-					ticks: { color: '#a8b3c7' },
-					grid: { color: 'rgba(255,255,255,0.1)' }
-				},
-				x: { 
-					ticks: { color: '#a8b3c7', font: { family: 'Vazirmatn' } },
-					grid: { color: 'rgba(255,255,255,0.05)' }
-				}
-			}
-		}
-	});
-}
-
-function renderTempChart(data) {
-	const ctx = el.tempChart.getContext('2d');
-	if (tempChartInstance) tempChartInstance.destroy();
-	
-	const chartContainer = el.tempChart.parentElement;
-	
-	// بررسی اینکه data معتبر هست
-	if (!data || !data.time || !data.time.length) {
-		console.warn('⚠️ No data available for temperature chart');
-		el.tempChart.style.display = 'none';
-		
-		// نمایش پیغام در container
-		let noDataMsg = chartContainer.querySelector('.no-data-message');
-		if (!noDataMsg) {
-			noDataMsg = document.createElement('div');
-			noDataMsg.className = 'no-data-message';
-			noDataMsg.style.cssText = 'text-align: center; padding: 40px 20px; color: var(--muted); font-size: 14px;';
-			chartContainer.appendChild(noDataMsg);
-		}
-		noDataMsg.textContent = t('noHistoricalData') || 'داده‌های تاریخی در دسترس نیست';
-		return;
-	}
-	
-	// حذف پیغام no-data اگر وجود داشته باشد
-	const noDataMsg = chartContainer.querySelector('.no-data-message');
-	if (noDataMsg) noDataMsg.remove();
-	
-	el.tempChart.style.display = 'block';
-	
-	const locale = currentLang === 'fa' ? 'fa-IR' : 'en-US';
-	const labels = data.time.map(t => {
-		const d = new Date(t);
-		return d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
-	});
-	
-	tempChartInstance = new Chart(ctx, {
-		type: 'line',
-		data: {
-			labels,
-			datasets: [
-				{
-					label: currentLang === 'fa' ? 'حداکثر دما' : 'Max Temperature',
-					data: data.temperature_2m_max || [],
-					borderColor: 'rgba(255, 107, 107, 1)',
-					backgroundColor: 'rgba(255, 107, 107, 0.1)',
-					tension: 0.3,
-				},
-				{
-					label: currentLang === 'fa' ? 'حداقل دما' : 'Min Temperature',
-					data: data.temperature_2m_min || [],
-					borderColor: 'rgba(78, 205, 196, 1)',
-					backgroundColor: 'rgba(78, 205, 196, 0.1)',
-					tension: 0.3,
-				}
-			]
-		},
-		options: {
-			responsive: true,
-			maintainAspectRatio: false,
-			plugins: {
-				legend: { labels: { color: '#e9edf3', font: { family: 'Vazirmatn' } } },
-			},
-			scales: {
-				y: { 
-					ticks: { color: '#a8b3c7' },
-					grid: { color: 'rgba(255,255,255,0.1)' }
-				},
-				x: { 
-					ticks: { color: '#a8b3c7', font: { family: 'Vazirmatn' } },
-					grid: { color: 'rgba(255,255,255,0.05)' }
-				}
-			}
-		}
-	});
-}
-
-function renderHistoryStats(data) {
-	// بررسی اینکه data معتبر هست
-	if (!data || !data.precipitation_sum || !data.temperature_2m_max || !data.temperature_2m_min) {
-		console.warn('⚠️ No data available for history stats');
-		el.historyStats.innerHTML = `
-			<div style="text-align: center; color: var(--muted); padding: 20px;">
-				${t('noData') || 'داده‌ای موجود نیست'}
-			</div>
-		`;
-		return;
-	}
-	
-	const totalPrecip = data.precipitation_sum.reduce((a, b) => a + (b || 0), 0);
-	const avgMax = data.temperature_2m_max.reduce((a, b) => a + b, 0) / data.temperature_2m_max.length;
-	const avgMin = data.temperature_2m_min.reduce((a, b) => a + b, 0) / data.temperature_2m_min.length;
-	const maxPrecip = Math.max(...data.precipitation_sum);
-	
-	el.historyStats.innerHTML = `
-		<div class="stat-item">
-			<div class="stat-label">${t('totalPrecip')}</div>
-			<div class="stat-value">${fmtMm(totalPrecip)}</div>
-		</div>
-		<div class="stat-item">
-			<div class="stat-label">${t('avgMax')}</div>
-			<div class="stat-value">${fmtTemp(avgMax)}</div>
-		</div>
-		<div class="stat-item">
-			<div class="stat-label">${t('avgMin')}</div>
-			<div class="stat-value">${fmtTemp(avgMin)}</div>
-		</div>
-		<div class="stat-item">
-			<div class="stat-label">${t('maxDaily')}</div>
-			<div class="stat-value">${fmtMm(maxPrecip)}</div>
-		</div>
-	`;
-}
-
-// Saved Cities
-function renderCityTabs() {
-	el.cityTabs.innerHTML = '';
-	if (state.savedCities.length === 0) {
-		el.cityTabs.innerHTML = `<div style="color: var(--muted); padding: 8px;">${t('noCitiesSaved')}</div>`;
-		return;
-	}
-	state.savedCities.forEach((city, idx) => {
-		const tab = document.createElement('div');
-		tab.className = 'city-tab' + (idx === state.activeCityIndex ? ' active' : '');
-		tab.innerHTML = `<span>${city.name}</span>`;
-		
-		const closeBtn = document.createElement('button');
-		closeBtn.className = 'close';
-		closeBtn.innerHTML = '×';
-		closeBtn.title = 'حذف';
-		closeBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			removeCity(idx);
-		});
-		
-		tab.appendChild(closeBtn);
-		tab.addEventListener('click', () => switchToCity(idx));
-		el.cityTabs.appendChild(tab);
-	});
-}
-
-function addCurrentCity() {
-	if (!state.place) {
-		showToast(t('selectCityFirst'));
-		return;
-	}
-	if (state.savedCities.length >= MAX_CITIES) {
-		showToast(t('maxCitiesReached').replace('${max}', formatNumber(MAX_CITIES)));
-		return;
-	}
-	const exists = state.savedCities.some(c => 
-		Math.abs(c.lat - state.place.lat) < 0.01 && 
-		Math.abs(c.lon - state.place.lon) < 0.01
-	);
-	if (exists) {
-		showToast(t('cityAlreadySaved'));
-		return;
-	}
-	state.savedCities.push({ ...state.place });
-	state.activeCityIndex = state.savedCities.length - 1;
-	saveCities();
-	renderCityTabs();
-	showToast(`${state.place.name} ${t('cityAdded')}`);
-}
-
-function removeCity(idx) {
-	const cityName = state.savedCities[idx].name;
-	state.savedCities.splice(idx, 1);
-	if (state.activeCityIndex >= state.savedCities.length) {
-		state.activeCityIndex = Math.max(0, state.savedCities.length - 1);
-	}
-	saveCities();
-	renderCityTabs();
-	if (state.savedCities.length > 0) {
-		switchToCity(state.activeCityIndex);
-	}
-	showToast(`${cityName} ${t('cityRemoved')}`);
-}
-
-async function switchToCity(idx) {
-	if (idx < 0 || idx >= state.savedCities.length) return;
-	state.activeCityIndex = idx;
-	localStorage.setItem('activeCityIndex', idx);
-	const city = state.savedCities[idx];
-	showLoadingCard(t('loadingCityInfo'));
-	try {
-		const weather = await fetchWeather(city.lat, city.lon);
-		const aqi = await fetchAirQuality(city.lat, city.lon);
-		state.place = { ...city, timezone: weather.timezone, isUserLocation: false };
-		state.weather = weather;
-		state.airQuality = aqi;
-		state.selectedDayIndex = 0;
-		renderSelectedDay();
-		renderCityTabs();
-		await loadHistoricalData('week');
-		hideLoadingCard();
-	} catch (e) {
-		hideLoadingCard();
-		showToast(t('fetchError'));
-	}
-}
-
-function saveCities() {
-	localStorage.setItem('savedCities', JSON.stringify(state.savedCities));
-	localStorage.setItem('activeCityIndex', state.activeCityIndex);
-}
-
-// Location
-function getGeoPosition() {
-	return new Promise((resolve, reject) => {
-		if (!('geolocation' in navigator)) return reject(new Error('عدم دسترسی به موقعیت'));
-		navigator.geolocation.getCurrentPosition(
-			pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-			reject,
-			{ enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-		);
-	});
-}
-
-async function getIpLocation() {
-	try {
-		const data = await fetchJson(IP_API);
-		if (data && data.latitude && data.longitude) return { lat: data.latitude, lon: data.longitude };
-		throw new Error('no ip loc');
-	} catch { return null; }
-}
-
-async function loadByLocation(lat, lon) {
-	console.log('📍 Loading location:', lat, lon);
-	
-	// نمایش کارت بارگذاری فقط اگر قبلاً نمایش داده نشده باشد
-	if (!el.loadingCard || !el.loadingCard.classList.contains('show')) {
-		showLoadingCard(t('loadingLocation'));
-	}
-	
-	const placeMeta = await reverseGeocode(lat, lon);
-	
-	// اگر reverse geocode کار نکرد، از نام پیش‌فرض استفاده کن
-	let finalPlace;
-	const yourLoc = t('yourLocation');
-	if (placeMeta && placeMeta.name && placeMeta.name !== yourLoc) {
-		// اسم شهر پیدا شد
-		finalPlace = placeMeta;
-		console.log('✅ City found:', finalPlace.name);
-	} else {
-		// اسم شهر پیدا نشد، از Nominatim استفاده می‌کنیم
-		console.log('⚠️ Trying Nominatim as fallback...');
-		try {
-			const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=${currentLang === 'fa' ? 'fa' : 'en'}`;
-			const response = await fetch(nominatimUrl, {
-				headers: {
-					'User-Agent': 'WeatherApp/1.0'
-				}
-			});
-			const data = await response.json();
-			console.log('🗺️ Nominatim response:', data);
-			
-			if (data && data.address) {
-				const addr = data.address;
-				const cityName = addr.city || addr.town || addr.village || addr.county || addr.state || yourLoc;
-				finalPlace = {
-					name: cityName,
-					country: addr.country || '',
-					admin1: addr.state || addr.province || '',
-					timezone: 'auto'
-				};
-				console.log('✅ Nominatim city found:', cityName);
-			} else {
-				finalPlace = { name: yourLoc, country: '', admin1: '' };
-			}
-		} catch (e) {
-			console.error('❌ Nominatim error:', e);
-			finalPlace = { name: yourLoc, country: '', admin1: '' };
-		}
-	}
-	
-	console.log('🌍 Final place name:', finalPlace.name);
-	
-	try {
-		const weather = await fetchWeather(lat, lon);
-		const aqi = await fetchAirQuality(lat, lon);
-		state.place = { ...finalPlace, lat, lon, timezone: weather.timezone, isUserLocation: true };
-		state.weather = weather;
-		state.airQuality = aqi;
-		state.selectedDayIndex = 0;
-		renderSelectedDay();
-		localStorage.setItem('lastPlace', JSON.stringify(state.place));
-		await loadHistoricalData('week');
-		hideLoadingCard();
-	} catch (e) {
-		hideLoadingCard();
-		showToast(t('fetchError'));
-		throw e;
-	}
-}
-
-// Search
-function openSuggestions(items) {
-	el.suggestions.innerHTML = '';
-	items.forEach((p, idx) => {
-		const it = document.createElement('div'); 
-		it.className = 'item'; 
-		it.tabIndex = 0; 
-		it.setAttribute('role', 'option'); 
-		it.id = `sugg-${idx}`;
-		it.innerHTML = `<div class="title">${p.name}</div><div class="sub">${[p.admin1, p.country].filter(Boolean).join('، ')}</div>`;
-		it.addEventListener('click', () => selectPlace(p));
-		it.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') selectPlace(p);
-			if (e.key === 'Escape') { closeSuggestions(); el.searchInput.focus(); }
-			if (e.key === 'ArrowDown') { e.preventDefault(); it.nextElementSibling?.focus(); }
-			if (e.key === 'ArrowUp') { e.preventDefault(); (it.previousElementSibling || el.searchInput).focus(); }
-		});
-		el.suggestions.appendChild(it);
-	});
-	el.suggestions.classList.toggle('open', items.length > 0);
-	el.searchInput.setAttribute('aria-expanded', items.length > 0 ? 'true' : 'false');
-}
-
-function closeSuggestions() {
-	el.suggestions.classList.remove('open');
-	el.suggestions.innerHTML = '';
-	el.searchInput.setAttribute('aria-expanded', 'false');
-}
-
-async function selectPlace(p) {
-	closeSuggestions();
-	el.searchInput.value = `${p.name}${p.admin1 ? '، ' + p.admin1 : ''}`;
-	showLoadingCard(t('loadingCityInfo'));
-	try {
-		const weather = await fetchWeather(p.lat, p.lon);
-		const aqi = await fetchAirQuality(p.lat, p.lon);
-		state.place = { ...p, timezone: weather.timezone, isUserLocation: false };
-		state.weather = weather;
-		state.airQuality = aqi;
-		state.selectedDayIndex = 0;
-		renderSelectedDay();
-		localStorage.setItem('lastPlace', JSON.stringify(state.place));
-		await loadHistoricalData('week');
-		hideLoadingCard();
-	} catch (e) {
-		hideLoadingCard();
-		showToast(t('fetchError'));
-	}
-}
-
-// Event listeners
-el.searchInput.addEventListener('input', debounce(async () => {
-	const q = el.searchInput.value.trim();
-	if (q.length < 2) { closeSuggestions(); return; }
-	try {
-		const items = await geocodeSearch(q);
-		openSuggestions(items);
-	} catch { }
-}, 300));
-
-el.searchInput.addEventListener('keydown', (e) => {
-	if (e.key === 'Escape') closeSuggestions();
-	if (e.key === 'ArrowDown' && el.suggestions.classList.contains('open')) {
-		e.preventDefault();
-		el.suggestions.querySelector('.item')?.focus();
-	}
-});
-
-document.addEventListener('click', (e) => {
-	if (!el.suggestions.contains(e.target) && e.target !== el.searchInput) closeSuggestions();
-});
-
-// Location Permission Modal Event Listeners
-if (el.locationPermissionAllow) {
-	el.locationPermissionAllow.addEventListener('click', requestLocationPermission);
-}
-
-if (el.locationPermissionDeny) {
-	el.locationPermissionDeny.addEventListener('click', denyLocationPermission);
-}
-
-el.useLocation.addEventListener('click', async () => {
-	// نمایش کارت بارگذاری بلافاصله
-	showLoadingCard(t('loadingYourLocation'));
-	
-	try {
-		const { lat, lon } = await getGeoPosition();
-		await loadByLocation(lat, lon);
-		const cityName = state.place?.name || t('yourLocation');
-		showToast(`${cityName} ${t('locationDetected')}`);
-	} catch {
-		hideLoadingCard(); // Hide if location was denied
-		showToast(t('locationDenied'));
-		const ipLoc = await getIpLocation();
-		if (ipLoc) { 
-			await loadByLocation(ipLoc.lat, ipLoc.lon); 
-			const cityName = state.place?.name || t('yourLocation');
-			showToast(`${cityName} ${t('locationFromIP')}`);
-		}
-		else { 
-			showToast(t('locationFailed')); 
-			await loadByLocation(35.6892, 51.3890); 
-		}
-	}
-});
-
-el.addCity.addEventListener('click', addCurrentCity);
-
-el.prevDay.addEventListener('click', (e) => {
-	if (state.selectedDayIndex > 0) {
-		state.selectedDayIndex--;
-		renderSelectedDay();
-	}
-});
-
-el.nextDay.addEventListener('click', (e) => {
-	const maxDays = state.weather?.daily?.length || 7;
-	if (state.selectedDayIndex < maxDays - 1) {
-		state.selectedDayIndex++;
-		renderSelectedDay();
-	}
-});
-
-el.view7d.addEventListener('click', () => {
-	state.currentDayView = 7;
-	el.view7d.classList.add('active');
-	el.view14d.classList.remove('active');
-	renderDaily();
-});
-
-el.view14d.addEventListener('click', () => {
-	state.currentDayView = 14;
-	el.view14d.classList.add('active');
-	el.view7d.classList.remove('active');
-	renderDaily();
-});
-
-const historyTabs = Array.from(document.querySelectorAll('.history-tab'));
-historyTabs.forEach(tab => {
-	tab.addEventListener('click', async () => {
-		const period = tab.dataset.period;
-		historyTabs.forEach(t => t.classList.toggle('active', t.dataset.period === period));
-		await loadHistoricalData(period);
-	});
-});
-
-function applyUnitButtons() {
-	el.unitC.classList.toggle('active', state.unit === 'C');
-	el.unitC.setAttribute('aria-pressed', state.unit === 'C');
-	el.unitF.classList.toggle('active', state.unit === 'F');
-	el.unitF.setAttribute('aria-pressed', state.unit === 'F');
-}
-
-el.unitC.addEventListener('click', () => { 
-	state.unit = 'C'; 
-	localStorage.setItem('unit', 'C'); 
-	applyUnitButtons(); 
-	renderSelectedDay(); 
-	if (state.historyData) {
-		renderTempChart(state.historyData);
-		renderHistoryStats(state.historyData);
-		renderTempHistoryStats(state.historyData);
-	}
-});
-
-el.unitF.addEventListener('click', () => { 
-	state.unit = 'F'; 
-	localStorage.setItem('unit', 'F'); 
-	applyUnitButtons(); 
-	renderSelectedDay(); 
-	if (state.historyData) {
-		renderTempChart(state.historyData);
-		renderHistoryStats(state.historyData);
-		renderTempHistoryStats(state.historyData);
-	}
-});
-
-function applyModelSelect() {
-	if (!el.modelSelect) return;
-	const allowedModels = new Set(['best_match', 'ecmwf_ifs04', 'gfs_global', 'icon_global']);
-	if (!allowedModels.has(state.model)) {
-		state.model = 'best_match';
-		localStorage.setItem('wxModel', state.model);
-	}
-	el.modelSelect.value = state.model;
-}
-
-async function reloadForecastForCurrentPlace() {
-	if (!state.place?.lat || !state.place?.lon) return;
-
-	showLoadingCard(t('loadingModel'));
-	try {
-		const weather = await fetchWeather(state.place.lat, state.place.lon);
-		const aqi = await fetchAirQuality(state.place.lat, state.place.lon);
-		state.weather = weather;
-		state.airQuality = aqi;
-		state.place = { ...state.place, timezone: weather.timezone };
-		renderSelectedDay();
-		hideLoadingCard();
-	} catch (e) {
-		hideLoadingCard();
-		showToast(t('fetchError'));
-	}
-}
-
-if (el.modelSelect) {
-	applyModelSelect();
-	el.modelSelect.addEventListener('change', async () => {
-		const next = el.modelSelect.value;
-		if (!next || next === state.model) return;
-		state.model = next;
-		localStorage.setItem('wxModel', next);
-
-		if (state.weather && state.place?.lat && state.place?.lon) {
-			await reloadForecastForCurrentPlace();
-		} else {
-			updateDataMeta();
-		}
-	});
-}
-
-// Language toggle buttons
-const langFa = document.getElementById('langFa');
-const langEn = document.getElementById('langEn');
-
-	if (langFa) {
-		langFa.addEventListener('click', async () => {
-			changeLanguage('fa');
-			langFa.classList.add('active');
-			langEn.classList.remove('active');
-			if (state.weather) {
-			// Restart live clock with new language
-			if (state.weather.timezone) {
-				startLiveClock(state.weather.timezone);
-			}
-			renderSelectedDay();
-			// Re-render charts with new language
-				if (state.historyData) {
-					renderPrecipChart(state.historyData);
-					renderTempChart(state.historyData);
-					renderHistoryStats(state.historyData);
-					renderTempHistoryStats(state.historyData);
-				}
-			}
-		});
-	}
-
-	if (langEn) {
-		langEn.addEventListener('click', async () => {
-			changeLanguage('en');
-			langEn.classList.add('active');
-			langFa.classList.remove('active');
-			if (state.weather) {
-			// Restart live clock with new language
-			if (state.weather.timezone) {
-				startLiveClock(state.weather.timezone);
-			}
-			renderSelectedDay();
-			// Re-render charts with new language
-				if (state.historyData) {
-					renderPrecipChart(state.historyData);
-					renderTempChart(state.historyData);
-					renderHistoryStats(state.historyData);
-					renderTempHistoryStats(state.historyData);
-				}
-			}
-		});
-	}
-
-// Set initial language button state
-function applyLangButtons() {
-	if (currentLang === 'fa') {
-		langFa?.classList.add('active');
-		langEn?.classList.remove('active');
-	} else {
-		langEn?.classList.add('active');
-		langFa?.classList.remove('active');
-	}
-}
-
-// Apply language buttons on load
-setTimeout(() => applyLangButtons(), 100);
-
-// کنترل ساعت منظومه شمسی
-if (el.solarSystemHour) {
-	el.solarSystemHour.addEventListener('input', () => {
-		const hour = parseInt(el.solarSystemHour.value);
-		state.solarSystemHour = hour;
-		const hourStr = hour.toString().padStart(2, '0');
-		if (el.solarSystemHourDisplay) {
-			el.solarSystemHourDisplay.textContent = `${formatNumber(hourStr)}:${formatNumber('00')}`;
-		}
-		
-		if (state.weather) {
-			const selectedDayData = state.weather.daily[state.selectedDayIndex];
-			const dateForMoon = new Date(selectedDayData.time);
-			const moonData = getMoonPhase(dateForMoon);
-			renderSolarSystem(moonData.phase);
-		}
-	});
-}
-
-if (el.resetToNow) {
-	el.resetToNow.addEventListener('click', () => {
-		if (state.selectedDayIndex === 0) {
-			state.solarSystemHour = null;
-			const now = new Date();
-			const hour = now.getHours();
-			if (el.solarSystemHour) {
-				el.solarSystemHour.value = hour;
-			}
-			const hourStr = hour.toString().padStart(2, '0');
-			const minStr = now.getMinutes().toString().padStart(2, '0');
-			if (el.solarSystemHourDisplay) {
-				el.solarSystemHourDisplay.textContent = `${formatNumber(hourStr)}:${formatNumber(minStr)}`;
-			}
-		} else {
-			state.solarSystemHour = 12;
-			if (el.solarSystemHour) {
-				el.solarSystemHour.value = 12;
-			}
-			if (el.solarSystemHourDisplay) {
-				el.solarSystemHourDisplay.textContent = `${formatNumber('12')}:${formatNumber('00')}`;
-			}
-		}
-		
-		if (state.weather) {
-			const selectedDayData = state.weather.daily[state.selectedDayIndex];
-			const dateForMoon = new Date(selectedDayData.time);
-			const moonData = getMoonPhase(dateForMoon);
-			renderSolarSystem(moonData.phase);
-		}
-	});
-}
-
-// کنترل zoom منظومه شمسی
-if (el.zoomIn) {
-	el.zoomIn.addEventListener('click', () => {
-		if (state.solarSystemZoom < 2.0) {
-			state.solarSystemZoom = Math.min(2.0, state.solarSystemZoom + 0.1);
-			if (el.zoomLevel) {
-				const percent = Math.round(state.solarSystemZoom * 100);
-				el.zoomLevel.textContent = `${formatNumber(percent)}%`;
-			}
-			if (state.weather) {
-				const selectedDayData = state.weather.daily[state.selectedDayIndex];
-				const dateForMoon = new Date(selectedDayData.time);
-				const moonData = getMoonPhase(dateForMoon);
-				renderSolarSystem(moonData.phase);
-			}
-		}
-	});
-}
-
-if (el.zoomOut) {
-	el.zoomOut.addEventListener('click', () => {
-		if (state.solarSystemZoom > 0.5) {
-			state.solarSystemZoom = Math.max(0.5, state.solarSystemZoom - 0.1);
-			if (el.zoomLevel) {
-				const percent = Math.round(state.solarSystemZoom * 100);
-				el.zoomLevel.textContent = `${formatNumber(percent)}%`;
-			}
-			if (state.weather) {
-				const selectedDayData = state.weather.daily[state.selectedDayIndex];
-				const dateForMoon = new Date(selectedDayData.time);
-				const moonData = getMoonPhase(dateForMoon);
-				renderSolarSystem(moonData.phase);
-			}
-		}
-	});
-}
-
-if (el.zoomReset) {
-	el.zoomReset.addEventListener('click', () => {
-		state.solarSystemZoom = getDefaultZoom();
-		if (el.zoomLevel) {
-			const percent = Math.round(state.solarSystemZoom * 100);
-			el.zoomLevel.textContent = `${formatNumber(percent)}%`;
-		}
-		if (state.weather) {
-			const selectedDayData = state.weather.daily[state.selectedDayIndex];
-			const dateForMoon = new Date(selectedDayData.time);
-			const moonData = getMoonPhase(dateForMoon);
-			renderSolarSystem(moonData.phase);
-		}
-	});
-}
-
-// تنظیم خودکار zoom در resize (با debounce)
-let resizeTimeout;
-window.addEventListener('resize', () => {
-	clearTimeout(resizeTimeout);
-	resizeTimeout = setTimeout(() => {
-		const newZoom = getDefaultZoom();
-		// فقط اگر تغییر معناداری در zoom باشد
-		if (Math.abs(newZoom - state.solarSystemZoom) > 0.05) {
-			state.solarSystemZoom = newZoom;
-			if (el.zoomLevel) {
-				const percent = Math.round(state.solarSystemZoom * 100);
-				el.zoomLevel.textContent = `${formatNumber(percent)}%`;
-			}
-			if (state.weather) {
-				const selectedDayData = state.weather.daily[state.selectedDayIndex];
-				const dateForMoon = new Date(selectedDayData.time);
-				const moonData = getMoonPhase(dateForMoon);
-				renderSolarSystem(moonData.phase);
-			}
-		}
-	}, 250); // صبر 250ms بعد از آخرین resize
-});
-
-// مخفی کردن باکس‌های اطلاعات با کلیک در جای دیگر
-document.addEventListener('click', () => {
-	const sunBox = document.getElementById('sunInfoBox');
-	const moonBox = document.getElementById('moonInfoBox');
-	const sunMarker = document.getElementById('sunPositionMarker');
-	const moonMarker = document.getElementById('moonPositionMarker');
-	
-	if (sunBox) sunBox.style.opacity = '0';
-	if (moonBox) moonBox.style.opacity = '0';
-	if (sunMarker) sunMarker.dataset.clicked = '';
-	if (moonMarker) moonMarker.dataset.clicked = '';
-});
-
-// بهبود اسکرول برای بخش‌های افقی
-function improveScrollBehavior() {
-	// برای تمام المنت‌هایی که اسکرول افقی دارند
-	const scrollContainers = document.querySelectorAll('.city-tabs, .scroller, .days');
-	
-	scrollContainers.forEach(container => {
-		container.addEventListener('wheel', (e) => {
-			// اگر اسکرول افقی نداره، اجازه بده صفحه اصلی اسکرول بشه
-			const hasHorizontalScroll = container.scrollWidth > container.clientWidth;
-			
-			if (!hasHorizontalScroll) {
-				// هیچ اسکرول افقی نیست، اجازه بده عمودی کار کنه
-				return;
-			}
-			
-			// اگر اسکرول افقی داره و کاربر داره افقی اسکرول می‌کنه
-			if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-				e.stopPropagation();
-			}
-			// اگر داره عمودی اسکرول می‌کنه، اجازه بده به parent برسه
-		}, { passive: true });
-	});
-	
-	// ثابت کردن اجزای current card هنگام اسکرول
-	const currentCard = document.querySelector('.current-card');
-	if (currentCard) {
-		// لیست المنت‌هایی که باید ثابت بمانند
-		const fixedElements = currentCard.querySelectorAll(
-			'.temp-large, .condition, .local-time, .current-header h2, ' +
-			'.stat-card, .stat-icon, .stat-content, .stat-label, .stat-value, ' +
-			'.current-body > *:not(.wx-icon), .stats-grid'
-		);
-		
-		// تابعی که تمام transformها را reset می‌کند
-		const resetTransforms = () => {
-			fixedElements.forEach(el => {
-				// بجز wx-icon و اجزای انیمیشن
-				if (!el.classList.contains('wx-icon') && 
-					!el.closest('.wx-icon') &&
-					!el.classList.contains('drop') &&
-					!el.classList.contains('flake') &&
-					!el.classList.contains('cloud') &&
-					!el.classList.contains('sun')) {
-					el.style.transform = 'none';
-					el.style.webkitTransform = 'none';
-				}
-			});
-		};
-		
-		// Reset در هر اسکرول
-		let scrollTimeout;
-		window.addEventListener('scroll', () => {
-			resetTransforms();
-			
-			// یک بار دیگر بعد از توقف اسکرول
-			clearTimeout(scrollTimeout);
-			scrollTimeout = setTimeout(resetTransforms, 50);
-		}, { passive: true });
-		
-		// Reset اولیه
-		resetTransforms();
-	}
-}
-
-// Init
-(async function init() {
-	console.log('🚀 Initializing app...');
-	
-	applyUnitButtons();
-	renderCityTabs();
-	initSectionNav();
-	setupMapLazyInit();
-	
-	// بهبود رفتار اسکرول
-	setTimeout(() => improveScrollBehavior(), 1000);
-	
-	// تنظیم اولیه نوار ساعت
-	const now = new Date();
-	if (el.solarSystemHour) {
-		el.solarSystemHour.value = now.getHours();
-	}
-	if (el.solarSystemHourDisplay) {
-		const hourStr = now.getHours().toString().padStart(2, '0');
-		const minStr = now.getMinutes().toString().padStart(2, '0');
-		el.solarSystemHourDisplay.textContent = `${formatNumber(hourStr)}:${formatNumber(minStr)}`;
-	}
-	
-	// تنظیم اولیه zoom
-	if (el.zoomLevel) {
-		const percent = Math.round(state.solarSystemZoom * 100);
-		el.zoomLevel.textContent = `${formatNumber(percent)}%`;
-	}
-	
-	if (state.savedCities.length > 0 && state.activeCityIndex < state.savedCities.length) {
-		console.log('📍 Loading saved city:', state.savedCities[state.activeCityIndex].name);
-		await switchToCity(state.activeCityIndex);
-		return;
-	}
-	
-	const last = localStorage.getItem('lastPlace');
-	if (last) {
-		console.log('📍 Loading last place from localStorage...');
-		try {
-			const p = JSON.parse(last);
-			console.log('📍 Last place:', p.name, p.lat, p.lon);
-			const weather = await fetchWeather(p.lat, p.lon);
-			const aqi = await fetchAirQuality(p.lat, p.lon);
-			// حفظ isUserLocation از localStorage، اگر وجود نداشت false
-			state.place = { ...p, timezone: weather.timezone };
-			state.weather = weather;
-			state.airQuality = aqi;
-			console.log('✅ Weather loaded successfully for:', p.name);
-			renderSelectedDay();
-			await loadHistoricalData('week');
-		} catch (e) {
-			console.error('❌ Error loading last place:', e);
-			// پاک کردن lastPlace خراب از localStorage
-			localStorage.removeItem('lastPlace');
-		}
-	}
-	
-	if (!state.weather) {
-		console.log('🌍 No weather data loaded yet, checking location permission...');
-		
-		// Wait for loading screen to be hidden before showing modal
-		const loadingScreen = document.getElementById('loadingScreen');
-		const waitForLoadingScreen = () => {
-			if (loadingScreen && loadingScreen.style.display !== 'none' && !loadingScreen.classList.contains('hidden')) {
-				// Loading screen still visible, wait a bit more
-				setTimeout(waitForLoadingScreen, 100);
-				return;
-			}
-			
-			// Loading screen is hidden, now show modal
-			const modalShown = showLocationPermissionModal();
-			
-			if (!modalShown) {
-				// If modal was not shown (permission previously denied), try IP location
-				(async () => {
-					try {
-						console.log('📍 Trying IP location...');
-						const ipLoc = await getIpLocation();
-						if (ipLoc) {
-							console.log('✅ IP location detected:', ipLoc.lat, ipLoc.lon);
-							await loadByLocation(ipLoc.lat, ipLoc.lon);
-						} else {
-							console.log('⚠️ IP location failed, loading Tehran...');
-							await loadByLocation(35.6892, 51.3890);
-						}
-					} catch (e) {
-						console.error('❌ Error loading location:', e);
-						await loadByLocation(35.6892, 51.3890);
-					}
-				})();
-			}
-			// If modal was shown, wait for user interaction (handled by button click handlers)
-		};
-		
-		// Start checking after a short delay to ensure loading screen has time to hide
-		setTimeout(waitForLoadingScreen, 100);
-	}
-	
-	console.log('✅ App initialized successfully!');
+/* PIMX Weather Studio. All weather values originate from provider responses. */
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const D = WeatherData;
+  const paths = {
+    sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
+    moon:'<path d="M20.5 13A9 9 0 0 1 11 3.5a9 9 0 1 0 9.5 9.5Z"/>',
+    cloud:'<path d="M6 19a4 4 0 1 1 .4-8A6 6 0 0 1 18 9a5 5 0 0 1 0 10Z"/>',
+    partly:'<path d="M12 3v2M3 12h2m1-6 1.5 1.5M18 6l-1.5 1.5"/><path d="M8 13a4.5 4.5 0 1 1 7-4"/><path d="M9 20a3.5 3.5 0 1 1 .5-7 5 5 0 0 1 9-2 4.5 4.5 0 0 1 0 9Z"/>',
+    rain:'<path d="M5 15a3.5 3.5 0 1 1 .4-7A5.5 5.5 0 0 1 16 7a4 4 0 0 1 2 8H5m2 3-1 3m6-3-1 3m6-3-1 3"/>',
+    snow:'<path d="M5 13a3.5 3.5 0 1 1 .4-7A5.5 5.5 0 0 1 16 5a4 4 0 0 1 2 8H5M8 16v6m-2-4 4 2m0-2-4 2m10-4v6m-2-4 4 2m0-2-4 2"/>',
+    storm:'<path d="M5 14a3.5 3.5 0 1 1 .4-7A5.5 5.5 0 0 1 16 6a4 4 0 0 1 2 8h-2"/><path d="m12 12-4 6h4l-2 5 7-8h-5l2-3"/>',
+    fog:'<path d="M5 13a3.5 3.5 0 1 1 .4-7A5.5 5.5 0 0 1 16 5a4 4 0 0 1 2 8H5M3 17h18M6 21h12"/>',
+    grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    chart:'<path d="M3 3v18h18M6 15l5-5 4 3 6-8"/>', calendar:'<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18M7 15h2m6 0h2m-10 3h2"/>',
+    wind:'<path d="M3 8h12a3 3 0 1 0-3-3M2 12h17a3 3 0 1 1-3 3M4 16h5a3 3 0 1 1-3 3"/>', map:'<path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16"/>', pin:'<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/>',
+    history:'<path d="M3 11a9 9 0 1 1 2 7M3 4v7h7m2-5v6l4 2"/>', globe:'<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>', shield:'<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>', arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',
+    refresh:'<path d="M20 7a8 8 0 0 0-14-2L3 8m0-5v5h5m-4 9a8 8 0 0 0 14 2l3-3m0 5v-5h-5"/>', locate:'<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>', search:'<circle cx="10.5" cy="10.5" r="7"/><path d="m16 16 5 5"/>', bookmark:'<path d="M6 3h12v18l-6-4-6 4V3Z"/>',
+    'arrow-up':'<path d="M12 20V4m-5 5 5-5 5 5"/>', 'arrow-down':'<path d="M12 4v16m-5-5 5 5 5-5"/>', clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', sunrise:'<path d="M3 17h18M5 21h14M7 17a5 5 0 0 1 10 0M12 3v7m-3-4 3-3 3 3M3 10l2 2m14 0 2-2"/>', spark:'<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/>',
+    info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.01"/>', radar:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="m12 12 7-7"/><circle cx="12" cy="12" r="1"/>', play:'<path d="m8 4 12 8-12 8V4Z"/>', pause:'<path d="M8 4v16m8-16v16"/>', plus:'<path d="M12 4v16M4 12h16"/>', close:'<path d="m6 6 12 12M6 18 18 6"/>', download:'<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>', droplet:'<path d="M12 2S5 10 5 15a7 7 0 0 0 14 0c0-5-7-13-7-13Z"/>', eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>', gauge:'<path d="M4 19a10 10 0 1 1 16 0M5 12h2m5-7v2m5 5h2m-7 4 5-7"/><circle cx="12" cy="16" r="1"/>', thermometer:'<path d="M9 14V5a3 3 0 0 1 6 0v9a5 5 0 1 1-6 0Zm3-8v11"/>', walk:'<circle cx="14" cy="4" r="2"/><path d="m8 10 4-3 3 5 4 1m-7-6-2 8 4 3 1 4m-5-7-4 7"/>'
+  };
+  const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.info}</svg>`;
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+  const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+  const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { toast(t('storageError')); } };
+  const defaults = [
+    {name:'Tehran',fa:'تهران',country:'Iran',countryFa:'ایران',lat:35.6892,lon:51.389,timezone:'Asia/Tehran'},
+    {name:'London',fa:'لندن',country:'United Kingdom',countryFa:'بریتانیا',lat:51.5085,lon:-0.1257,timezone:'Europe/London'},
+    {name:'Dubai',fa:'دبی',country:'United Arab Emirates',countryFa:'امارات',lat:25.0657,lon:55.1713,timezone:'Asia/Dubai'},
+    {name:'Tokyo',fa:'توکیو',country:'Japan',countryFa:'ژاپن',lat:35.6762,lon:139.6503,timezone:'Asia/Tokyo'}
+  ];
+  const last = read('pimx.weather.place', read('lastPlace', null));
+  const oldSaved = read('savedCities', []);
+  const saved = read('pimx.weather.cities', Array.isArray(oldSaved) ? oldSaved : []);
+  const state = {
+    lang: read('pimx.weather.lang','fa') === 'en' ? 'en' : 'fa', unit: read('pimx.weather.unit','C') === 'F' ? 'F' : 'C',
+    light: read('pimx.weather.light',false) === true, place: D.validPlace(last) ? last : defaults[0],
+    saved: (Array.isArray(saved) ? saved : []).filter(D.validPlace).slice(0,20),
+    model:['best_match','ecmwf_ifs04','gfs_global','icon_global'].includes(read('pimx.weather.model','best_match'))?read('pimx.weather.model','best_match'):'best_match',weatherModel:'best_match',minutes:null,sky:null,skyKey:'',selectedPlanet:'Earth',solarRenderer:null,solarLoading:false,solarVisible:false,cameraMotion:!matchMedia('(prefers-reduced-motion: reduce)').matches,
+    weather:null, air:null, retrieved:0, chartMode:'temperature_2m', days:7, day:0, loading:false,
+    error:null, airError:false, history:null, historyLoading:false, controller:null, revision:0, historyRevision:0,
+    cityWeather:new Map(), cityRevision:0, map:null, marker:null, radarLayer:null, radarFrames:[], radarHost:'', radarEnabled:false, radarTimer:null, radarLoaded:0, radarIndex:0
+  };
+  let dateModelControls;
+  const t = (key, params = {}) => {
+    let value = messages[key]?.[state.lang === 'fa' ? 0 : 1] || key;
+    return value.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? '—'));
+  };
+  const locale = () => state.lang === 'fa' ? 'fa-IR' : 'en-GB';
+  const num = (value, digits = 0) => D.finite(value) ? new Intl.NumberFormat(locale(),{maximumFractionDigits:digits}).format(value) : '—';
+  const temp = (value, degree = true) => { const v = D.temperature(value,state.unit); return D.finite(v) ? `${num(v)}${degree ? '°' : ''}` : '—'; };
+  function zone() {
+    const candidate=state.weather?.timezone || state.place.timezone;
+    if(candidate)try {new Intl.DateTimeFormat('en',{timeZone:candidate});return candidate;}catch { /* Ignore invalid persisted timezone metadata. */ }
+    return 'UTC';
+  }
+  const time = (epoch, options = {}) => D.finite(epoch) && epoch > 0 ? new Intl.DateTimeFormat(locale(),{timeZone:zone(),hour:'2-digit',minute:'2-digit',hour12:false,...options}).format(new Date(epoch*1000)) : '—';
+  const date = (epoch, options = {}) => D.finite(epoch) ? new Intl.DateTimeFormat(locale(),{timeZone:zone(),month:'short',day:'numeric',...options}).format(new Date(epoch*1000)) : '—';
+  const placeName = p => p.kind==='gps'?t('yourLocation'):p.kind==='map'?t('mapPoint'):state.lang === 'fa' && p.fa ? p.fa : p.name;
+  const countryName = p => state.lang === 'fa' && p.countryFa ? p.countryFa : p.country || '';
+  const placeKey = p => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
+  const condition = code => weatherNames[code]?.[state.lang === 'fa' ? 0 : 1] || t('noData');
+  const view = () => D.viewContext(state.weather,state.day,state.minutes);
+  function weatherSample(){
+    const context=view(),weather=state.weather;
+    if(!context)return null;
+    if(context.live)return weather.current;
+    if(context.hour<0)return null;
+    return Object.fromEntries(Object.entries(weather.hourly).map(([key,values])=>[key,values?.[context.hour] ?? null]));
+  }
+  function airSample(){
+    const context=view();if(!context || !state.air)return null;
+    if(context.live)return state.air.current;
+    const i=D.hourIndex(state.air.hourly?.time,context.epoch);if(i<0)return null;
+    const current=Object.fromEntries(Object.entries(state.air.hourly).map(([key,values])=>[key,values?.[i] ?? null]));
+    return D.finite(current.us_aqi)?current:null;
+  }
+  function skySnapshot(){
+    const context=view();if(!context || !window.SkyData)return null;
+    const key=`${Math.floor(context.epoch/60)}/${context.start}/${context.end}/${placeKey(state.place)}`;
+    if(state.skyKey!==key){state.sky=SkyData.snapshot(context.epoch,context.start,context.end,state.place.lat,state.place.lon);state.skyKey=key;}
+    return state.sky;
+  }
+  function duration(seconds){return D.finite(seconds)?t('hoursMinutes',{h:num(Math.floor(seconds/3600)),m:num(Math.floor(seconds%3600/60))}):'—';}
+  function modelName(){return ({best_match:'Best Match',ecmwf_ifs04:'ECMWF',gfs_global:'GFS',icon_global:'ICON'})[state.weatherModel];}
+  const weatherIcon = (code, day = 1) => !D.finite(code) ? 'info' : code <= 1 ? (day ? 'sun':'moon') : code === 2 ? 'partly' : code === 3 ? 'cloud' : code < 50 ? 'fog' : code >= 95 ? 'storm' : [71,73,75,77,85,86].includes(code) ? 'snow' : 'rain';
+  function toast(message) { $('toast').textContent=message; $('toast').hidden=false; clearTimeout(toast.timer); toast.timer=setTimeout(() => $('toast').hidden=true,4500); }
+  function empty(message, retry = '') { return `<div class="empty-state">${esc(message)}${retry ? `<p></p><button class="button ghost" data-action="${retry}">${t('retry')}</button>` : ''}</div>`; }
+  async function fetchJSON(url, signal) {
+    const response = await fetch(url,{signal:AbortSignal.any([AbortSignal.timeout(18000),...(signal ? [signal]:[])])});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data=await response.json();
+    if (data.error) throw new Error(data.reason || 'Provider error');
+    return data;
+  }
+  function applyLanguage() {
+    document.documentElement.lang=state.lang; document.documentElement.dir=state.lang==='fa'?'rtl':'ltr';
+    document.querySelectorAll('[data-t]').forEach(e=>e.textContent=t(e.dataset.t));
+    document.querySelectorAll('[data-placeholder]').forEach(e=>e.placeholder=t(e.dataset.placeholder));
+    document.querySelectorAll('[data-label]').forEach(e=>e.setAttribute('aria-label',t(e.dataset.label)));
+    document.querySelectorAll('.nav-link').forEach(e=>e.setAttribute('aria-label',t(e.querySelector('[data-t]').dataset.t)));
+    $('searchInput').setAttribute('aria-label',t('searchPlaceholder'));
+    $('languageButton').innerHTML=`${state.lang==='fa'?'EN':'FA'} ${icon('globe')}`;
+    renderAll(); renderSaved(); renderHistory(); renderSources(); updateRadarTime();
+    if(state.map) { state.map.invalidateSize(); updateMap(); }
+  }
+  function renderQuick() {
+    $('quickCities').innerHTML=defaults.map((p,i)=>`<button class="quick-city ${placeKey(p)===placeKey(state.place)?'active':''}" data-quick="${i}">${esc(placeName(p))}</button>`).join('');
+    const isSaved=state.saved.some(p=>placeKey(p)===placeKey(state.place));
+    $('saveCityButton').classList.toggle('saved',isSaved);
+    $('saveCityButton').setAttribute('aria-pressed',String(isSaved));
+  }
+  function renderStatus() {
+    const banner=$('statusBanner');
+    const message=state.loading ? t('loadingCity',{name:placeName(state.place)}) : state.error ? t(state.error) : state.retrieved && Date.now()-state.retrieved>30*60*1000 ? t('stale') : '';
+    banner.hidden=!message; banner.innerHTML=`${state.loading?'<span class="loading-indicator"></span>':''}${esc(message)}`;
+    $('overview').setAttribute('aria-busy',String(state.loading));
+    $('refreshButton').disabled=state.loading;
+    $('exportButton').disabled=!state.weather || state.loading;
+    $('saveCityButton').disabled=state.loading || !state.weather;
+    $('addCityButton').disabled=state.loading || !state.weather;
+  }
+  async function loadPlace(place, refresh = false) {
+    if (!D.validPlace(place)) return;
+    stopTime();
+    state.controller?.abort(); state.controller=new AbortController();
+    const signal=state.controller.signal; const revision=++state.revision;const requestedModel=state.model;
+    const keepDate=state.weather&&(state.day>0||state.minutes!==null)?view()?.key:null;
+    const same=state.weather && placeKey(place)===placeKey(state.place);
+    state.place={...place}; state.loading=true; state.error=null;
+    ++state.historyRevision; state.historyLoading=false;
+    if (!same) {state.weather=null;state.air=null;state.history=null;state.retrieved=0;state.day=0;state.minutes=null;state.sky=null;state.skyKey='';state.airError=false;}
+    renderAll(); renderHistory(); updateMap();
+    const aqURL=`https://air-quality-api.open-meteo.com/v1/air-quality?${new URLSearchParams({latitude:place.lat,longitude:place.lon,current:'us_aqi,pm2_5,pm10,nitrogen_dioxide,ozone',hourly:'us_aqi,pm2_5,pm10,nitrogen_dioxide,ozone',forecast_days:'7',timezone:'auto',timeformat:'unixtime'})}`;
+    const airPromise=fetchJSON(aqURL,signal).then(data=>({data})).catch(error=>({error}));
+    try {
+      const weather=await fetchJSON(D.forecastURL(place,requestedModel),signal);
+      if (revision!==state.revision) return;
+      if(!weather.current || !Array.isArray(weather.hourly?.time) || !Array.isArray(weather.daily?.time) || !weather.timezone) throw new Error('Incomplete provider response');
+      // Validate the provider timezone before it reaches date formatters.
+      new Intl.DateTimeFormat('en',{timeZone:weather.timezone});
+      state.weather=weather;state.weatherModel=requestedModel;
+      const sameDate=same&&keepDate?weather.daily.time.findIndex(epoch=>D.dateKey(epoch,weather.timezone)===keepDate):-1;
+      if(sameDate>=0)state.day=sameDate;else {state.day=0;state.minutes=null;}
+      state.place.timezone=weather.timezone;state.retrieved=Date.now();state.loading=false;
+      state.cityWeather.set(placeKey(place),{current:weather.current,at:Date.now()});
+      state.air=null;state.airError=false;
+      write('pimx.weather.place',state.place);renderAll();renderHistory();updateMap();renderSaved();renderSources();
+      const air=await airPromise;
+      if (revision!==state.revision) return;
+      state.air=air.data || null;state.airError=!!air.error;renderAir();renderMetrics();
+      loadSavedWeather();
+    } catch (error) {
+      if(revision!==state.revision || signal.aborted) return;
+      console.warn('Weather provider request failed:',error.message);
+      state.loading=false;state.error=same?'retainedData':'networkError';
+      if(!same) state.airError=true;
+      renderAll();
+    }
+  }
+  function renderAll() {
+    renderStatus();renderQuick();renderDateControls();renderHero();renderSun();renderHourly();renderForecast();renderMetrics();renderAir();renderInsights();renderAstronomy();renderSolar();updateClock();
+    ['C','F'].forEach(u=>{const e=$(`unit${u}`);e.classList.toggle('active',state.unit===u);e.setAttribute('aria-pressed',String(state.unit===u));});
+    if(state.retrieved) $('fetchTime').textContent=t('retrievedAt',{time:time(state.retrieved/1000,{second:'2-digit'}),zone:zone()});
+    else $('fetchTime').textContent=t('noData');
+  }
+  function renderDateControls(){
+    const context=view(),d=state.weather?.daily;
+    $('prevDay').disabled=!context||state.day===0;$('nextDay').disabled=!context||state.day>=d.time.length-1;
+    $('datePicker').disabled=!context;$('solarSystemHour').disabled=!context;$('timePlay').disabled=!context;
+    $('timePlay').setAttribute('aria-label',t(timeTimer?'pauseTime':'playTime'));
+    $('modelSelect').value=state.model;
+    if(!context){$('selectedDate').textContent='—';$('solarSystemHourDisplay').textContent='—';$('datePicker').value='';dateModelControls?.sync(D.dateKey(Date.now()/1000,zone()));return;}
+    $('selectedDate').textContent=`${context.isToday?t('today'):date(context.epoch,{weekday:'long'})} · ${date(context.epoch,{year:'numeric'})}`;
+    $('datePicker').min=D.dateKey(d.time[0],zone());$('datePicker').max=D.dateKey(d.time.at(-1),zone());$('datePicker').value=context.key;
+    $('solarSystemHour').max=Math.floor((context.end-context.start)/60)-15;
+    $('solarSystemHour').value=Math.floor((context.epoch-context.start)/60/15)*15;
+    $('solarSystemHourDisplay').textContent=time(context.epoch);
+    $('resetToNow').classList.toggle('radar-on',context.live);
+    dateModelControls?.sync(D.dateKey(Date.now()/1000,zone()));
+  }
+  function changeDay(index){
+    stopTime();
+    if(!state.weather || index<0 || index>=state.weather.daily.time.length)return;
+    state.day=index;state.minutes=null;if(index>=state.days)state.days=14;renderAll();
+    if(!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      ['overview','sunMoonDetails','planetInfoBox'].forEach(id=>$(id).animate([{opacity:.45,transform:'translateY(6px)'},{opacity:1,transform:'translateY(0)'}],{duration:450,easing:'cubic-bezier(.2,.7,.2,1)'}));
+    }
+  }
+  let timeTimer=null;
+  function stopTime(){clearInterval(timeTimer);timeTimer=null;$('timePlay').setAttribute('aria-pressed','false');$('timePlay').setAttribute('aria-label',t('playTime'));$('timePlay').innerHTML=icon('play');}
+  function playTime(){
+    if(timeTimer){stopTime();return;}if(!view())return;
+    $('timePlay').setAttribute('aria-pressed','true');$('timePlay').setAttribute('aria-label',t('pauseTime'));$('timePlay').innerHTML=icon('pause');
+    timeTimer=setInterval(()=>{
+      const context=view();if(!context){stopTime();return;}
+      const next=context.epoch+3600;
+      if(next>=context.end){if(state.day>=state.weather.daily.time.length-1){stopTime();return;}state.day++;const bounds=D.dayBounds(state.weather.daily.time[state.day],zone());state.minutes=Math.max(0,(next-bounds.start)/60);}
+      else state.minutes=(next-context.start)/60;
+      renderAll();
+    },1000);
+  }
+  function renderHero() {
+    $('placeName').textContent=placeName(state.place);
+    $('placeRegion').textContent=[state.place.admin1,countryName(state.place)].filter(Boolean).join(' · ') || `${state.place.lat.toFixed(4)}°, ${state.place.lon.toFixed(4)}°`;
+    const w=state.weather,c=weatherSample(),context=view(),i=state.day;
+    document.querySelector('[data-t=currentConditions]').textContent=context&&!context.live?t('selectedForecast',{date:date(context.epoch),time:time(c?.time)}):t('currentConditions');
+    $('currentTemp').textContent=temp(c?.temperature_2m,false);$('heroUnit').textContent=`°${state.unit}`;
+    $('currentCondition').textContent=c?condition(c.weather_code):t(state.loading?'loading':'noData');
+    $('currentWeatherIcon').innerHTML=c?icon(weatherIcon(c.weather_code,c.is_day)):'';
+    $('heroFeels').textContent=c?t('feels',{value:`${temp(c.apparent_temperature)}${state.unit}`}):'—';
+    $('todayHigh').textContent=t('high',{value:temp(w?.daily.temperature_2m_max?.[i])});
+    $('todayLow').textContent=t('low',{value:temp(w?.daily.temperature_2m_min?.[i])});
+    $('dataTime').textContent=c?t('dataAt',{time:time(c.time)}):'—';
+    const night=c?.is_day===0, rain=c && [51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99].includes(c.weather_code);
+    $('overview').style.background=night?'linear-gradient(115deg,#233345,#23384c 55%,#30455d)':rain?'linear-gradient(115deg,#354452,#455d6b)':'linear-gradient(115deg,#294052,#3b6775)';
+    $('skyScene').innerHTML=`${night?'<div class="stars"></div>':''}<div class="orbit-ring"></div><div class="sky-orb ${night?'night':''}"></div>${c?.weather_code>1?'<div class="scene-cloud"></div><div class="scene-cloud second"></div>':''}${rain?'<div class="scene-rain"></div>':''}<svg class="landscape" viewBox="0 0 600 350" preserveAspectRatio="none"><path d="M0 350 70 260 130 277 252 96 300 145 362 75 430 178 480 161 600 285V350Z" fill="#446274" opacity=".55"/><path d="m140 260 112-164 48 49-39-11-24 45-14-8Z" fill="#b6c8cf" opacity=".18"/><path d="M0 350 100 306 240 231 303 269 415 202 490 260 600 230V350Z" fill="#294657"/><path d="M0 350 184 304 293 327 425 280 600 308V350Z" fill="#1d3544"/><g fill="none" stroke="#a4c8d3" stroke-opacity=".1"><path d="M0 341c200-70 320 60 600-37M0 330c200-70 320 60 600-37M0 319c200-70 320 60 600-37"/></g></svg>`;
+  }
+  function updateClock() {
+    const now=Date.now()/1000;
+    const context=view();
+    $('localClock').textContent=state.weather || state.place.timezone ? `${time(context?.epoch ?? now)} · ${zone()}` : '—';
+    $('todayDate').textContent=date(context?.epoch ?? now,{weekday:'long',year:'numeric'});
+  }
+  function renderSun() {
+    const d=state.weather?.daily,i=state.day,context=view(),rise=d?.sunrise?.[i],set=d?.sunset?.[i],now=context?.epoch ?? Date.now()/1000;
+    document.querySelector('.daylight-panel .small-tag').textContent=context?.isToday?t('today'):context?date(context.epoch):t('today');
+    $('sunriseTime').textContent=time(rise);$('sunsetTime').textContent=time(set);
+    const duration=d?.daylight_duration?.[i];
+    $('daylightLength').textContent=D.finite(duration)?t('daylight',{h:num(Math.floor(duration/3600)),m:num(Math.floor(duration%3600/60))}):'—';
+    let message='—';
+    if(D.finite(rise)&&rise>0&&D.finite(set)&&set>0) {
+      const seconds=now<rise?rise-now:now<set?set-now:null;
+      message=seconds===null?t('afterSunset'):t(now<rise?'untilSunrise':'untilSunset',{h:num(Math.floor(seconds/3600)),m:num(Math.floor(seconds%3600/60))});
+    } else if(D.finite(duration)) message=t(duration>43200?'polarDay':'polarNight');
+    $('sunCountdown').textContent=message;
+    const hasArc=D.finite(rise)&&rise>0&&D.finite(set)&&set>rise;
+    const progress=hasArc?Math.max(0,Math.min(1,(now-rise)/(set-rise))):null;
+    const angle=Math.PI*(1-(progress ?? 0));const x=140+105*Math.cos(angle),y=140-105*Math.sin(angle);
+    $('sunArc').innerHTML=`<svg viewBox="0 0 280 165"><defs><linearGradient id="sunFill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#d5f5a0" stop-opacity=".15"/><stop offset="1" stop-color="#d5f5a0" stop-opacity="0"/></linearGradient></defs><path d="M35 140A105 105 0 0 1 245 140Z" fill="url(#sunFill)"/><path d="M35 140A105 105 0 0 1 245 140" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 5"/><path d="M20 140h240" stroke="var(--line)"/>${hasArc?`<path d="M35 140A105 105 0 0 1 245 140" fill="none" stroke="var(--accent)" stroke-width="2" pathLength="100" stroke-dasharray="${progress*100} 100"/><circle cx="${x}" cy="${y}" r="15" fill="#d5f5a012"/><circle cx="${x}" cy="${y}" r="6" fill="var(--accent)"/>`:''}<circle cx="35" cy="140" r="3" fill="var(--muted)"/><circle cx="245" cy="140" r="3" fill="var(--muted)"/><text x="140" y="123" text-anchor="middle" fill="var(--muted)" font-size="10" font-family="Inter,Vazirmatn,sans-serif">${esc(hasArc?time(now):t('noData'))}</text></svg>`;
+  }
+  function nextHours() {
+    const h=state.weather?.hourly,context=view();if(!h||!context)return [];
+    if(!context.live)return D.dayIndices(h.time,context.epoch,zone());
+    const i=context.hour;return i>=0?Array.from({length:Math.min(24,h.time.length-i)},(_,n)=>i+n):[];
+  }
+  function chartSVG(values, labels, color='var(--accent)', id='hour', valueFormatter=v=>num(v),second=null) {
+    const actual=[...values,...(second || [])].filter(D.finite);if(!actual.length)return empty(t('noData'));
+    const max=Math.max(...actual),min=Math.min(...actual),range=Math.max(max-min,1);
+    const lower=min-range*.15,upper=max+range*.15,W=700,H=145,left=35,right=12,top=15,bottom=25;
+    const x=i=>left+i*(W-left-right)/Math.max(values.length-1,1),y=v=>top+(upper-v)/(upper-lower)*(H-top-bottom);
+    let segments=[],current=[];
+    values.forEach((v,i)=>{if(D.finite(v))current.push([x(i),y(v)]);else if(current.length){segments.push(current);current=[];}});if(current.length)segments.push(current);
+    const line=s=>s.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
+    let secondPaths='';
+    if(second){let run=[];const flush=()=>{if(run.length)secondPaths+=`<path d="${line(run)}" fill="none" stroke="#d9aa85" stroke-width="2"/>`;run=[];};second.forEach((v,i)=>{if(D.finite(v))run.push([x(i),y(v)]);else flush();});flush();}
+    let grid='';for(let i=0;i<3;i++){const value=lower+(upper-lower)*i/2,yy=y(value);grid+=`<path d="M${left} ${yy}H${W-right}" stroke="var(--line)" stroke-dasharray="3 5"/><text x="0" y="${yy+3}" fill="var(--muted)" font-size="9">${esc(valueFormatter(value))}</text>`;}
+    const step=Math.max(1,Math.ceil(values.length/6));
+    const ticks=labels.map((label,i)=>i%step===0?`<text x="${x(i)}" y="${H-3}" text-anchor="middle" fill="var(--muted)" font-size="9">${esc(label)}</text>`:'').join('');
+    const hit=values.map((v,i)=>D.finite(v)?`<rect class="chart-hit" x="${x(i)-((W-left-right)/Math.max(values.length-1,1))/2}" y="0" width="${(W-left-right)/Math.max(values.length-1,1)}" height="${H}" data-chart-index="${i}"/>`:'').join('');
+    return `<svg class="weather-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(t(id==='hour'?'hourlyTitle':'historyTitle'))}" style="font-family:Inter,Vazirmatn,sans-serif"><defs><linearGradient id="fill-${id}" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${color}" stop-opacity=".16"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>${grid}${segments.map(s=>`<path d="${line(s)} L${s.at(-1)[0]},${H-bottom} L${s[0][0]},${H-bottom}Z" fill="url(#fill-${id})"/><path d="${line(s)}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`).join('')}${secondPaths}${ticks}${hit}</svg>`;
+  }
+  function renderHourly() {
+    const indices=nextHours(),h=state.weather?.hourly;
+    document.querySelector('[data-t=hourlyTitle]').textContent=view()?.live?t('hourlyTitle'):t('selectedHours');
+    document.querySelectorAll('#chartModes button').forEach(e=>{const active=e.dataset.mode===state.chartMode;e.classList.toggle('active',active);e.setAttribute('aria-pressed',String(active));});
+    if(!h || !indices.length) {$('hourlyChart').innerHTML=empty(t(state.loading?'loading':'noData'));$('hourlyCards').innerHTML='';return;}
+    const values=indices.map(i=>state.chartMode==='temperature_2m'?D.temperature(h[state.chartMode]?.[i],state.unit):h[state.chartMode]?.[i]);
+    const unit=state.chartMode==='temperature_2m'?`°${state.unit}`:state.chartMode==='precipitation_probability'?'%':'km/h';
+    const labels=indices.map(i=>time(h.time[i]));
+    $('hourlyChart').innerHTML=chartSVG(values,labels,state.chartMode==='precipitation_probability'?'var(--blue)':'var(--accent)');
+    const tooltip=document.createElement('div');tooltip.className='chart-tooltip';tooltip.hidden=true;$('hourlyChart').append(tooltip);
+    $('hourlyChart').querySelectorAll('[data-chart-index]').forEach(e=>{
+      const show=()=>{const i=Number(e.dataset.chartIndex);tooltip.textContent=`${labels[i]} · ${num(values[i],1)} ${unit}`;tooltip.hidden=false;};
+      e.addEventListener('pointerenter',show);e.addEventListener('pointerdown',show);e.addEventListener('pointerleave',()=>tooltip.hidden=true);
+    });
+    $('hourlyCards').innerHTML=indices.filter((_,n)=>n%3===0).map((i,n)=>`<div class="hour-card ${i===view()?.hour?'current':''}"><span class="time">${n===0&&view()?.live?t('now'):time(h.time[i])}</span>${icon(weatherIcon(h.weather_code?.[i],h.is_day?.[i]))}<strong>${temp(h.temperature_2m?.[i])}</strong><small>${num(h.precipitation_probability?.[i])}%</small></div>`).join('');
+  }
+  function renderForecast() {
+    const d=state.weather?.daily;
+    document.querySelectorAll('#forecastDays button').forEach(e=>{const active=Number(e.dataset.days)===state.days;e.classList.toggle('active',active);e.setAttribute('aria-pressed',String(active));});
+    if(!d){$('forecastGrid').innerHTML=empty(t(state.loading?'loading':'noData'));$('dayDetail').hidden=true;return;}
+    $('forecastGrid').innerHTML=d.time.slice(0,state.days).map((epoch,i)=>`<button class="forecast-day ${state.day===i?'active':''}" data-day="${i}" aria-pressed="${state.day===i}" aria-label="${esc(`${date(epoch,{weekday:'long'})}, ${condition(d.weather_code?.[i])}`)}"><span class="day-name">${i===0?t('today'):i===1?t('tomorrow'):date(epoch,{weekday:'short',month:undefined,day:undefined})}</span><span class="day-date">${date(epoch)}</span>${icon(weatherIcon(d.weather_code?.[i]))}<div class="day-temperatures"><strong>${temp(d.temperature_2m_max?.[i])}</strong><span>${temp(d.temperature_2m_min?.[i])}</span></div><div class="day-rain">${icon('droplet')}${num(d.precipitation_probability_max?.[i])}%</div></button>`).join('');
+    document.querySelector('.forecast-note').textContent=`${t('forecastNote')} · ${t('modelHorizon',{model:modelName(),days:num(d.time.length)})}`;
+    const i=state.day;
+    $('dayDetail').hidden=false;
+    const details=[[t('totalRain'),`${num(d.precipitation_sum?.[i],1)} mm`],[t('maxWind'),`${num(d.wind_speed_10m_max?.[i])} km/h`],[t('maxUV'),num(d.uv_index_max?.[i],1)],[t('sunrise'),time(d.sunrise?.[i])],[t('sunset'),time(d.sunset?.[i])]];
+    $('dayDetail').innerHTML=`<div class="day-summary"><span class="day-summary-icon">${icon(weatherIcon(d.weather_code?.[i]))}</span><div><span>${t('dayWeather')}</span><strong>${esc(condition(d.weather_code?.[i]))}</strong></div></div><div class="day-detail-grid">${details.map(([label,value])=>`<div class="day-detail-item"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('')}</div>`;
+  }
+  function renderMetrics() {
+    const c=weatherSample(),h=state.weather?.hourly,context=view(),i=context?.hour ?? -1,hv=name=>i>=0?h[name]?.[i]:null,d=state.weather?.daily,n=state.day;
+    const windDir=D.finite(c?.wind_direction_10m)?`${['N','NE','E','SE','S','SW','W','NW'][Math.round(c.wind_direction_10m/45)%8]} ${num(c.wind_direction_10m)}°`:'';
+    const note=context?.live?t('currentModel'):t('viewSample',{time:time(c?.time)}),sky=skySnapshot(),aq=airSample();
+    const items=[
+      ['thermometer','feelsLike',temp(c?.apparent_temperature),state.unit,note,D.finite(c?.apparent_temperature)?(c.apparent_temperature+20)/70*100:null],
+      ['droplet','humidity',num(c?.relative_humidity_2m),'%',note,c?.relative_humidity_2m],
+      ['wind','wind',num(c?.wind_speed_10m),'km/h',`${windDir} · ${t('gusts',{value:num(c?.wind_gusts_10m)})}`,D.finite(c?.wind_speed_10m)?c.wind_speed_10m/60*100:null],
+      ['gauge','surfacePressure',num(c?.surface_pressure),'hPa',note,D.finite(c?.surface_pressure)?(c.surface_pressure-800)/300*100:null],
+      ['eye','visibility',num(D.finite(hv('visibility'))?hv('visibility')/1000:null,1),t('km'),t('hourlyModel'),D.finite(hv('visibility'))?hv('visibility')/20000*100:null],
+      ['thermometer','dewPoint',temp(hv('dew_point_2m')),state.unit,t('hourlyModel'),D.finite(hv('dew_point_2m'))?(hv('dew_point_2m')+20)/60*100:null],
+      ['droplet','probability',num(d?.precipitation_probability_max?.[n]),'%',`${t('totalRain')}: ${num(d?.precipitation_sum?.[n],1)} mm`,d?.precipitation_probability_max?.[n]],
+      ['sun','uv',num(hv('uv_index'),1),'',t('hourlyModel'),D.finite(hv('uv_index'))?hv('uv_index')/12*100:null],
+      ['wind','air',num(aq?.us_aqi),'US AQI',D.aqiCategory(aq?.us_aqi)>=0?t(['good','moderate','sensitive','unhealthy','veryUnhealthy','hazardous'][D.aqiCategory(aq.us_aqi)]):t('noData'),D.finite(aq?.us_aqi)?aq.us_aqi/300*100:null],
+      ['sunrise','sunrise',time(d?.sunrise?.[n]),'',context?date(context.epoch):'—',null],
+      ['sunrise','sunset',time(d?.sunset?.[n]),'',context?date(context.epoch):'—',null],
+      ['moon','phaseLabel',sky?moonName(sky.moon.phase):'—','',sky?t('illumination',{value:num(sky.moon.illumination*100,1)}):'—',sky?sky.moon.illumination*100:null],
+      ['gauge','pressure',num(c?.pressure_msl),'hPa',note,D.finite(c?.pressure_msl)?(c.pressure_msl-950):null],
+      ['cloud','cloudCover',num(c?.cloud_cover),'%',note,c?.cloud_cover]
+    ];
+    $('metricsGrid').innerHTML=items.map(([ic,key,value,unit,detail,bar])=>`<div class="metric" data-metric="${key}"><div class="metric-top">${icon(ic)}<span>${t(key)}</span></div><div class="metric-value ${key==='phaseLabel'?'metric-text':''}">${esc(value)}<small>${esc(unit)}</small></div><div class="metric-note">${esc(detail)}</div><div class="metric-bar"><span style="width:${D.finite(bar)?Math.max(0,Math.min(100,bar)):0}%"></span></div></div>`).join('');
+  }
+  function renderAir() {
+    const c=airSample();
+    if(!c){$('airContent').innerHTML=empty(t(state.airError?'airError':state.air?'airBeyondRange':state.loading || state.weather?'loading':'noData'));return;}
+    const index=D.aqiCategory(c.us_aqi),keys=['good','moderate','sensitive','unhealthy','veryUnhealthy','hazardous'],colors=['#b4df8f','#ead37d','#e7a474','#e87f86','#bda0e6','#b77591'];
+    const color=colors[index] || 'var(--muted)',progress=D.finite(c.us_aqi)?Math.min(300,c.us_aqi)/300*100:0;
+    $('airContent').innerHTML=`<div class="aqi-summary" style="--aq-color:${color}"><div class="aqi-ring" style="--aq-progress:${progress}%"><strong>${num(c.us_aqi)}</strong></div><div class="aqi-description"><h3>${index<0?t('noData'):t(keys[index])}</h3><p>${t('aqiDescription')}</p></div></div><div class="air-pollutants">${[['PM₂.₅','pm2_5'],['PM₁₀','pm10'],['NO₂','nitrogen_dioxide'],['O₃','ozone']].map(([label,key])=>`<div class="pollutant"><span>${label}</span><strong>${num(c[key],1)} <small>μg/m³</small></strong></div>`).join('')}</div><div class="aqi-scale" aria-hidden="true"></div><div class="air-data-time">${t('dataAt',{time:time(c.time)})}</div>`;
+  }
+  function renderInsights() {
+    if(!state.weather){$('insightContent').innerHTML=empty(t(state.loading?'loading':'noData'));return;}
+    const h=state.weather.hourly,indices=nextHours(),d=state.weather.daily,n=state.day;
+    const valid=i=>['temperature_2m','wind_speed_10m','precipitation_probability','is_day'].every(k=>D.finite(h[k]?.[i]));
+    const mild=i=>valid(i)&&h.is_day[i]===1&&h.temperature_2m[i]>=10&&h.temperature_2m[i]<=28&&h.wind_speed_10m[i]<20&&h.precipitation_probability[i]<30;
+    let best=[],run=[];indices.forEach(i=>{if(mild(i)){run.push(i);if(run.length>best.length)best=[...run];}else run=[];});
+    const rain=indices.find(i=>D.finite(h.precipitation_probability?.[i])&&h.precipitation_probability[i]>=50);
+    const allRainKnown=indices.length>0&&indices.every(i=>D.finite(h.precipitation_probability?.[i]));
+    const main=best.length?t('walkingTime',{start:time(h.time[best[0]]),end:time(h.time[best.at(-1)]+3600)}):indices.length>0&&indices.every(valid)?t('noWindowBody'):t('insufficientInsight');
+    $('insightContent').innerHTML=`<div class="insight-main"><div class="insight-icon">${icon(best.length?'walk':'cloud')}</div><h3>${t(best.length?'walkingTitle':'noWindow')}</h3><p>${esc(main)}</p>${best.length?`<p class="insight-criteria">${t('walkingCriteria')}</p>`:''}</div><div class="insight-row">${icon('droplet')}<div><strong>${t('nextRain')}</strong><p>${esc(rain!==undefined?t('nextRainTime',{time:time(h.time[rain]),value:num(h.precipitation_probability[rain])}):allRainKnown?t('noRain'):t('noData'))}</p></div></div><div class="insight-row">${icon('sun')}<div><strong>${t('uvPeak')}</strong><p>${t('uvPeakValue',{value:num(d.uv_index_max?.[n],1)})}</p></div></div>`;
+  }
+  function renderAstronomy() {
+    const sky=skySnapshot();
+    if(!sky){$('astronomyContent').innerHTML=empty(t(state.loading?'loading':'noData'));$('sunMoonDetails').innerHTML=empty(t(state.loading?'loading':'noData'));$('astronomyDate').textContent='—';return;}
+    $('astronomyDate').textContent=`${date(sky.epoch,{weekday:'long',year:'numeric'})} · ${time(sky.epoch)} · ${zone()}`;
+    const m=sky.moon,s=sky.sun;
+    $('astronomyContent').innerHTML=`<div class="moon-display">${moonDisc(m)}<div class="moon-info"><h3>${moonName(m.phase)}</h3><p>${t('illumination',{value:num(m.illumination*100,1)})}</p></div></div><div class="astro-row"><span>${t('moonAltitude')}</span><strong>${num(m.altitude,1)}°</strong></div><div class="astro-row"><span>${t('sunAltitude')}</span><strong>${num(s.altitude,1)}°</strong></div><div class="astro-row"><span>${t('moonDistance')}</span><strong>${num(m.distance)} km</strong></div><p class="astronomy-note">${t('astroNote')}</p>`;
+    const event=value=>value===null?t('notOnDay'):time(value);
+    const fields=(items)=>items.map(([key,value,id])=>`<div class="celestial-detail"><span>${t(key)}</span><strong id="${id}">${esc(value)}</strong></div>`).join('');
+    const sunFields=[['sunrise',event(s.rise),'sunRiseDetail'],['sunset',event(s.set),'sunSetDetail'],['dayLength',duration(s.duration),'sunDayLengthDetail'],['solarNoon',event(s.noon),'sunSolarNoonDetail'],['sunAltitude',`${num(s.altitude,1)}°`,'sunAltitudeDetail'],['sunAzimuth',`${num(s.azimuth,1)}°`,'sunAzimuthDetail'],['maxAltitude',`${num(s.maxAltitude,1)}°`,'sunMaxAltitudeDetail'],['sunDistance',`${num(s.distance)} km`,'sunDistanceDetail']];
+    const moonFields=[['phaseLabel',moonName(m.phase),'moonPhaseDetail'],['illuminationLabel',`${num(m.illumination*100,1)}%`,'moonIlluminationDetail'],['moonAge',`${num(m.age,2)} ${t('daysUnit')}`,'moonAgeDetail'],['moonrise',event(m.rise),'moonRiseDetail'],['moonset',event(m.set),'moonSetDetail'],['moonDuration',duration(m.duration),'moonDurationDetail'],['moonAltitude',`${num(m.altitude,1)}°`,'moonAltitudeDetail'],['moonAzimuth',`${num(m.azimuth,1)}°`,'moonAzimuthDetail'],['moonDistance',`${num(m.distance)} km`,'moonDistanceDetail']];
+    $('sunMoonDetails').innerHTML=`<article class="celestial-card sun-card"><div class="celestial-header"><div class="sun-sculpture" aria-hidden="true"></div><div><h3>${t('sunName')}</h3><p>${t('skyStatus',{state:t(s.altitude>=0?'aboveHorizon':'belowHorizon'),alt:num(s.altitude,1),az:num(s.azimuth,1)})}</p></div></div><div class="celestial-grid">${fields(sunFields)}</div><div class="celestial-track">${skyTrack(sky,s,'sun')}</div><div class="celestial-status" id="sunStatus">${s.rise!==null&&s.set!==null?t('positionProgress',{value:num(Math.max(0,Math.min(100,(sky.epoch-s.rise)/(s.set-s.rise)*100)))}):t(s.duration>0?'polarDay':'polarNight')}</div></article><article class="celestial-card moon-card"><div class="celestial-header">${moonDisc(m)}<div><h3>${t('moonName')} · ${moonName(m.phase)}</h3><p>${t('illumination',{value:num(m.illumination*100,1)})}</p></div></div><div class="celestial-grid">${fields(moonFields)}</div><div class="celestial-track">${skyTrack(sky,m,'moon')}</div><div class="celestial-status" id="moonStatus">${t('skyStatus',{state:t(m.altitude>=0?'aboveHorizon':'belowHorizon'),alt:num(m.altitude,1),az:num(m.azimuth,1)})}</div></article>`;
+  }
+  function moonName(phase){return t(['newMoon','waxingCrescent','firstQuarter','waxingGibbous','fullMoon','waningGibbous','lastQuarter','waningCrescent'][Math.round(phase*8)%8]);}
+  function moonDisc(moon){
+    const f=moon.illumination,rx=Math.abs(2*f-1)*50,sweep=f>.5?1:0;
+    const path=`M50 0 A50 50 0 0 1 50 100 A${Math.max(.001,rx)} 50 0 0 ${sweep} 50 0`;
+    return `<div class="moon-sphere physical-moon" aria-hidden="true"><svg viewBox="0 0 100 100"><defs><radialGradient id="moon-light"><stop stop-color="#e9ece2"/><stop offset="1" stop-color="#9daaaa"/></radialGradient></defs><circle cx="50" cy="50" r="50" fill="#202b38"/><g ${moon.phase>.5?'transform="translate(100 0) scale(-1 1)"':''}><path d="${path}" fill="url(#moon-light)"/></g><g fill="#718084" opacity=".18"><circle cx="32" cy="27" r="8"/><circle cx="63" cy="64" r="11"/><circle cx="35" cy="74" r="5"/><circle cx="73" cy="35" r="4"/></g></svg></div>`;
+  }
+  function skyTrack(sky,body,key){
+    const x=at=>35+(at-sky.start)/(sky.end-sky.start)*550,y=alt=>105-alt;
+    const line=body.samples.map((sample,i)=>`${i?'L':'M'}${x(sample.at)},${y(sample.altitude)}`).join(' ');
+    const color=key==='sun'?'#efd29a':'#99bef0';
+    const labels=body.samples.filter((_,i)=>i%12===0).map(sample=>`<text x="${x(sample.at)}" y="210" text-anchor="middle" fill="var(--muted)" font-size="10">${esc(time(sample.at))}</text>`).join('');
+    return `<svg viewBox="0 0 620 220" role="img" aria-label="${esc(t(key==='sun'?'sunAltitude':'moonAltitude'))}"><path d="M35 105H585" stroke="var(--line)" stroke-dasharray="4 5"/><text x="5" y="109" fill="var(--muted)" font-size="10">0°</text><path d="M35 15H585M35 195H585" stroke="var(--line)" opacity=".4"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2"/><path d="M${x(sky.epoch)} 15V195" stroke="${color}" opacity=".2"/><circle cx="${x(sky.epoch)}" cy="${y(body.altitude)}" r="12" fill="${color}" opacity=".12"/><circle cx="${x(sky.epoch)}" cy="${y(body.altitude)}" r="5" fill="${color}"/>${labels}<text x="${Math.max(60,Math.min(550,x(sky.epoch)))}" y="${Math.max(14,y(body.altitude)-15)}" text-anchor="middle" fill="${color}" font-size="12">${esc(num(body.altitude,1))}°</text></svg>`;
+  }
+  function renderSolar(){
+    const sky=skySnapshot();$('solarCanvas').style.visibility=sky?'visible':'hidden';$('planetLabels').hidden=!sky;$('solarStatus').hidden=!!sky;
+    if(!sky){$('solarStatus').textContent=t(state.loading?'loading':'noData');$('planetInfoBox').innerHTML=empty(t(state.loading?'loading':'noData'));$('planetTable').innerHTML='';$('planetLegend').innerHTML='';$('solarDate').textContent='—';state.solarRenderer?.setVisible(false);return;}
+    $('solarDate').textContent=`${date(sky.epoch,{year:'numeric'})} · ${time(sky.epoch)} · ${zone()}`;
+    $('solarMotion').setAttribute('aria-pressed',String(state.cameraMotion));
+    $('solarMotion').innerHTML=`${icon(state.cameraMotion?'pause':'play')}<span>${t('cameraMotion')}</span>`;
+    $('planetLegend').innerHTML=sky.planets.map(p=>`<button class="planet-choice ${p.key===state.selectedPlanet?'active':''}" data-planet="${p.key}" aria-pressed="${p.key===state.selectedPlanet}"><span style="background:${p.color}"></span>${t(p.name)}<small>${p.au.toFixed(2)} AU</small></button>`).join('');
+    const p=sky.planets.find(p=>p.key===state.selectedPlanet) || sky.planets[2];
+    $('planetInfoBox').innerHTML=`<div class="planet-info-head"><span class="planet-mini" style="--planet-color:${p.color}"></span><div><h3>${t(p.name)}</h3><p>${date(sky.epoch)} · ${time(sky.epoch)}</p></div></div><div class="planet-info-grid"><div><span>${t('distanceSun')}</span><strong data-planet-distance="${p.key}">${num(p.distance,4)} AU</strong><small>${num(p.distance*SkyData.AU_KM/1e6,2)} ${t('millionKm')}</small></div><div><span>${t('solarCoords')}</span><strong class="planet-coordinates" data-planet-coordinates="${p.key}"><bdi>X ${num(p.x,5)} · Y ${num(p.y,5)} · Z ${num(p.z,5)}</bdi></strong><small>${t(p.z>=0?'abovePlane':'belowPlane')}</small></div><div><span>${t('planetAltitude')}</span><strong>${p.horizon?`${num(p.horizon.altitude,1)}°`:'—'}</strong><small>${p.horizon?t(p.horizon.altitude>=0?'aboveHorizon':'belowHorizon'):t('yourLocation')}</small></div><div><span>${t('planetAzimuth')}</span><strong>${p.horizon?`${num(p.horizon.azimuth,1)}°`:'—'}</strong><small>${t('meanDistance')} · ${num(p.au,3)} AU</small></div></div>`;
+    $('planetTable').innerHTML=`<table class="planet-table"><thead><tr><th>${t('planetName')}</th><th>${t('distanceSun')} · AU</th><th>X · AU</th><th>Y · AU</th><th>Z · AU</th><th>${t('planetAltitude')}</th><th>${t('planetAzimuth')}</th></tr></thead><tbody>${sky.planets.map(p=>`<tr><td><button data-planet="${p.key}">${t(p.name)}</button></td><td>${num(p.distance,4)}</td><td>${num(p.x,5)}</td><td>${num(p.y,5)}</td><td>${num(p.z,5)}</td><td>${p.horizon?`${num(p.horizon.altitude,1)}°`:'—'}</td><td>${p.horizon?`${num(p.horizon.azimuth,1)}°`:'—'}</td></tr>`).join('')}</tbody></table>`;
+    if(state.solarRenderer){state.solarRenderer.setVisible(state.solarVisible);state.solarRenderer.update(sky,state.selectedPlanet,state.lang);}
+    else if(state.solarVisible)initSolarRenderer();
+  }
+  async function initSolarRenderer(){
+    if(state.solarLoading||state.solarRenderer||!skySnapshot())return;
+    state.solarLoading=true;
+    try{
+      const {createSolarSystem}=await import('./assets/solar-system.js');
+      state.solarRenderer=createSolarSystem({container:$('solarCanvas'),labels:$('planetLabels'),motion:state.cameraMotion,onSelect:key=>{state.selectedPlanet=key;renderSolar();},onZoom:percent=>$('zoomLevel').textContent=`${num(percent)}%`,onFallback:()=>toast(t('webglFallback'))});
+      state.solarRenderer.setVisible(state.solarVisible);state.solarRenderer.update(skySnapshot(),state.selectedPlanet,state.lang);
+    }catch(error){console.warn('Solar renderer failed:',error.message);$('solarCanvas').innerHTML=empty(t('webglFallback'));}
+    state.solarLoading=false;
+  }
+  let searchController=null,searchTimer=null,searchRevision=0,searchPlaces=[],searchActive=-1;
+  const aliases={'تهران':'Tehran','لندن':'London','دبی':'Dubai','توکیو':'Tokyo','اصفهان':'Isfahan','شیراز':'Shiraz','مشهد':'Mashhad','تبریز':'Tabriz','رشت':'Rasht','کرج':'Karaj','اهواز':'Ahvaz','یزد':'Yazd','کرمان':'Kerman','بندرعباس':'Bandar Abbas','پاریس':'Paris','نیویورک':'New York','استانبول':'Istanbul'};
+  function closeSearch() { $('searchResults').hidden=true;$('searchInput').setAttribute('aria-expanded','false');$('searchInput').removeAttribute('aria-activedescendant');searchActive=-1; }
+  async function searchCities(query,revision) {
+    searchController?.abort();searchController=new AbortController();
+    $('searchResults').hidden=false;$('searchInput').setAttribute('aria-expanded','true');
+    $('searchResults').innerHTML=`<div class="search-message">${t('loading')}</div>`;
+    try {
+      const data=await fetchJSON(`https://geocoding-api.open-meteo.com/v1/search?${new URLSearchParams({name:aliases[query] || query,count:'8',language:state.lang,format:'json'})}`,searchController.signal);
+      if(revision!==searchRevision) return;
+      searchPlaces=(data.results || []).map(p=>({name:p.name,country:p.country || '',admin1:p.admin1 || '',lat:p.latitude,lon:p.longitude,timezone:p.timezone})).filter(D.validPlace);
+      searchActive=-1;
+      $('searchResults').innerHTML=searchPlaces.length?searchPlaces.map((p,i)=>`<button class="search-result" id="search-result-${i}" role="option" aria-selected="false" data-search="${i}">${icon('pin')}<span><strong>${esc(p.name)}</strong><small>${esc([p.admin1,p.country].filter(Boolean).join(' · '))}</small></span></button>`).join(''):`<div class="search-message">${t('noResults')}</div>`;
+    } catch(error) {if(revision===searchRevision&&!searchController.signal.aborted)$('searchResults').innerHTML=`<div class="search-message">${t('searchError')}</div>`;}
+  }
+  function selectSearch(index) {const place=searchPlaces[index];if(!place)return;closeSearch();$('searchInput').value='';loadPlace(place);}
+  $('searchInput').addEventListener('input',()=>{
+    const query=$('searchInput').value.trim(),revision=++searchRevision;clearTimeout(searchTimer);searchController?.abort();searchPlaces=[];
+    if(query.length<2){closeSearch();return;}searchTimer=setTimeout(()=>searchCities(query,revision),350);
+  });
+  $('searchInput').addEventListener('keydown',event=>{
+    if(event.key==='Escape'){closeSearch();return;}
+    if(['ArrowDown','ArrowUp'].includes(event.key)&&searchPlaces.length&&!$('searchResults').hidden){
+      event.preventDefault();searchActive=(searchActive+(event.key==='ArrowDown'?1:-1)+searchPlaces.length)%searchPlaces.length;
+      $('searchInput').setAttribute('aria-activedescendant',`search-result-${searchActive}`);
+      $('searchResults').querySelectorAll('[role=option]').forEach((e,i)=>e.setAttribute('aria-selected',String(i===searchActive)));
+      $(`search-result-${searchActive}`).scrollIntoView({block:'nearest'});
+    }
+    if(event.key==='Enter'&&searchPlaces.length&&!$('searchResults').hidden){event.preventDefault();selectSearch(Math.max(0,searchActive));}
+  });
+  $('searchResults').addEventListener('click',event=>{const e=event.target.closest('[data-search]');if(e)selectSearch(Number(e.dataset.search));});
+  document.addEventListener('pointerdown',event=>{if(!event.target.closest('.search-box'))closeSearch();});
+  document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();$('searchInput').focus();$('searchInput').scrollIntoView({block:'center'});}});
+  function saveCity() {
+    if(!state.weather || state.loading)return;
+    if(state.saved.some(p=>placeKey(p)===placeKey(state.place))){toast(t('alreadySaved'));return;}
+    if(state.saved.length>=20){toast(t('maxCities'));return;}
+    state.saved.push({...state.place});write('pimx.weather.cities',state.saved);renderSaved();renderQuick();toast(t('saved'));loadSavedWeather();
+  }
+  function renderSaved() {
+    if(!state.saved.length){$('savedCities').innerHTML=empty(t('noCities'));return;}
+    $('savedCities').innerHTML=state.saved.map((p,i)=>{
+      const record=state.cityWeather.get(placeKey(p)),c=record?.current;
+      const stale=record && Date.now()-record.at>=15*60*1000;
+      return `<div class="saved-city"><button class="city-select" data-city="${i}">${icon(weatherIcon(c?.weather_code,c?.is_day))}<span class="city-info"><strong>${esc(placeName(p))}</strong><small>${esc(countryName(p))}${c?` · ${esc(stale?t('stale'):condition(c.weather_code))}`:''}</small></span><span class="city-temp">${temp(c?.temperature_2m)}</span></button><button class="icon-button city-remove" data-remove="${i}" aria-label="${esc(t('removeCity',{name:placeName(p)}))}">${icon('close')}</button></div>`;
+    }).join('');
+  }
+  async function loadSavedWeather() {
+    const revision=++state.cityRevision;
+    const pending=state.saved.filter(p=>{const record=state.cityWeather.get(placeKey(p));return !record || Date.now()-record.at>=15*60*1000;});
+    await Promise.allSettled(pending.map(async p=>{
+      try {
+        const data=await fetchJSON(`https://api.open-meteo.com/v1/forecast?${new URLSearchParams({latitude:p.lat,longitude:p.lon,current:'temperature_2m,weather_code,is_day',forecast_days:'1',timeformat:'unixtime'})}`);
+        if(revision!==state.cityRevision)return;
+        state.cityWeather.set(placeKey(p),{current:data.current || null,at:Date.now()});renderSaved();
+      } catch {if(revision===state.cityRevision){state.cityWeather.delete(placeKey(p));renderSaved();}}
+    }));
+  }
+  $('savedCities').addEventListener('click',event=>{
+    const remove=event.target.closest('[data-remove]'),select=event.target.closest('[data-city]');
+    if(remove){const i=Number(remove.dataset.remove);state.saved.splice(i,1);write('pimx.weather.cities',state.saved);renderSaved();renderQuick();toast(t('removed'));}
+    else if(select)loadPlace(state.saved[Number(select.dataset.city)]);
+  });
+  function renderHistory() {
+    if(state.historyLoading){$('historyContent').innerHTML=empty(t('loading'));return;}
+    if(!state.history){$('historyContent').innerHTML=`<div class="empty-state">${icon('history')}<p>${t('historyHint')}</p><button id="loadHistory" class="button ghost" ${!state.weather?'disabled':''}>${t('loadHistory')}</button></div>`;return;}
+    if(state.history.error){$('historyContent').innerHTML=empty(t('historyError'),'history');return;}
+    const d=state.history.daily,high=d.temperature_2m_max || [],low=d.temperature_2m_min || [],rain=d.precipitation_sum || [];
+    const values=high.map(v=>D.temperature(v,state.unit)),lowValues=low.map(v=>D.temperature(v,state.unit)),labels=d.time.map(epoch=>date(epoch));
+    const missing=[high,low,rain].some(a=>a.length!==d.time.length || a.some(v=>!D.finite(v)));
+    const mean=values=>{const numbers=values.filter(D.finite);return numbers.length?numbers.reduce((a,b)=>a+b,0)/numbers.length:null;};
+    const hottest=D.summary(high,'max'),coldest=D.summary(low,'min'),maximumRain=D.summary(rain,'max');
+    $('historyContent').innerHTML=`<div class="history-section-label">${t('tempHistory')}</div><div class="chart-legend"><span>${t('high',{value:''})}</span><span>${t('low',{value:''})}</span></div><div class="history-chart">${chartSVG(values,labels,'var(--blue)','history',v=>num(v),lowValues)}</div><div class="history-section-label">${t('rainHistory')}</div><div class="history-chart rain-history-chart">${rainHistoryChart(rain,labels)}</div><div class="history-stats"><div class="history-stat"><span>${t('warmest')}</span><strong>${temp(hottest)}</strong><small>${hottest===null?'—':date(d.time[high.indexOf(hottest)])}</small></div><div class="history-stat"><span>${t('coldest')}</span><strong>${temp(coldest)}</strong><small>${coldest===null?'—':date(d.time[low.indexOf(coldest)])}</small></div><div class="history-stat"><span>${t('rainSum')}</span><strong>${num(D.summary(rain,'sum'),1)} mm</strong></div><div class="history-stat"><span>${t('avgMax')}</span><strong>${temp(mean(high))}</strong></div><div class="history-stat"><span>${t('avgMin')}</span><strong>${temp(mean(low))}</strong></div><div class="history-stat"><span>${t('maxRain')}</span><strong>${num(maximumRain,1)} mm</strong><small>${maximumRain===null?'—':date(d.time[rain.indexOf(maximumRain)])}</small></div></div><div class="history-dates"><span>${date(d.time[0],{year:'numeric'})} — ${date(d.time.at(-1),{year:'numeric'})}</span><span>Open-Meteo · Reanalysis</span></div>${missing?`<p class="small muted">${t('incomplete')}</p>`:''}`;
+    const container=$('historyContent').querySelector('.history-chart');
+    const tooltip=document.createElement('div');tooltip.className='chart-tooltip';tooltip.hidden=true;container.style.position='relative';container.append(tooltip);
+    container.querySelectorAll('[data-chart-index]').forEach(e=>{
+      const show=()=>{const i=Number(e.dataset.chartIndex);tooltip.textContent=`${labels[i]} · ↑ ${temp(high[i])} · ↓ ${temp(low[i])} · ${num(rain[i],1)} mm`;tooltip.hidden=false;};
+      e.addEventListener('pointerenter',show);e.addEventListener('pointerdown',show);e.addEventListener('pointerleave',()=>tooltip.hidden=true);
+    });
+    const rainContainer=$('historyContent').querySelector('.rain-history-chart');rainContainer.style.position='relative';const rainTooltip=document.createElement('div');rainTooltip.className='chart-tooltip';rainTooltip.hidden=true;rainContainer.append(rainTooltip);
+    rainContainer.querySelectorAll('[data-rain-index]').forEach(element=>{const show=()=>{const i=Number(element.dataset.rainIndex);rainTooltip.textContent=`${labels[i]} · ${num(rain[i],1)} mm`;rainTooltip.hidden=false;};element.addEventListener('pointerenter',show);element.addEventListener('pointerdown',show);element.addEventListener('pointerleave',()=>rainTooltip.hidden=true);});
+  }
+  function rainHistoryChart(values,labels){
+    if(!values.some(D.finite))return empty(t('noData'));
+    const max=Math.max(1,D.summary(values,'max')),width=650/values.length;
+    const bars=values.map((v,i)=>D.finite(v)?`<rect x="${35+i*width}" y="${120-v/max*100}" width="${Math.max(.5,width*.72)}" height="${v/max*100}" fill="var(--blue)" opacity=".65"/><rect data-rain-index="${i}" x="${35+i*width}" y="15" width="${width}" height="110" fill="transparent"/>`:'').join('');
+    const step=Math.max(1,Math.ceil(values.length/6));
+    return `<svg class="weather-chart" viewBox="0 0 700 145" preserveAspectRatio="none" role="img" aria-label="${esc(t('rainHistory'))}"><path d="M35 120H685M35 20H685" stroke="var(--line)" stroke-dasharray="3 5"/><text x="1" y="24" fill="var(--muted)" font-size="9">${num(max,1)}</text><text x="1" y="123" fill="var(--muted)" font-size="9">0</text>${bars}${labels.map((label,i)=>i%step===0?`<text x="${35+i*width}" y="142" fill="var(--muted)" font-size="9">${esc(label)}</text>`:'').join('')}</svg>`;
+  }
+  async function loadHistory() {
+    if(!state.weather)return;
+    const revision=++state.historyRevision,place={...state.place},period=Number($('historyPeriod').value),range=D.historicalRange(period,zone());
+    state.historyLoading=true;renderHistory();
+    try {
+      const data=await fetchJSON(`https://archive-api.open-meteo.com/v1/archive?${new URLSearchParams({latitude:place.lat,longitude:place.lon,start_date:range.start,end_date:range.end,daily:'temperature_2m_max,temperature_2m_min,precipitation_sum',timezone:zone(),timeformat:'unixtime'})}`);
+      if(revision!==state.historyRevision)return;
+      if(!data.daily?.time?.length)throw new Error('No archive data');
+      state.history={daily:data.daily,range};
+    }catch {if(revision!==state.historyRevision)return;state.history={error:true};}
+    state.historyLoading=false;renderHistory();
+  }
+  function initMap() {
+    if(state.map)return;
+    if(!window.L){$('weatherMap').innerHTML=empty(t('mapError'));return;}
+    $('weatherMap').innerHTML='';
+    state.map=L.map('weatherMap',{scrollWheelZoom:false,minZoom:2,maxZoom:12}).setView([state.place.lat,state.place.lon],6);
+    const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(state.map);
+    let errors=0;tiles.on('tileerror',()=>{if(++errors===1)toast(t('mapTilesError'));});
+    state.marker=L.circleMarker([state.place.lat,state.place.lon],{radius:7,color:'#fff',weight:2,fillColor:'#466b87',fillOpacity:1}).addTo(state.map);
+    updateMap();state.map.on('click',event=>loadPlace({name:t('mapPoint'),lat:event.latlng.lat,lon:((event.latlng.lng+180)%360+360)%360-180,kind:'map'}));
+    new ResizeObserver(()=>state.map.invalidateSize()).observe($('weatherMap'));
+  }
+  function updateMap() {
+    if(!state.map)return;
+    state.map.setView([state.place.lat,state.place.lon],state.map.getZoom());state.marker.setLatLng([state.place.lat,state.place.lon]);
+    const popup=document.createElement('div');popup.textContent=`${placeName(state.place)}${state.weather?` · ${temp(state.weather.current.temperature_2m)}${state.unit}`:''}`;
+    state.marker.bindPopup(popup);
+  }
+  function stopRadar() {clearInterval(state.radarTimer);state.radarTimer=null;$('radarPlay').innerHTML=icon('play');}
+  function updateRadarTime() {
+    $('radarTimestamp').textContent=state.radarEnabled&&state.radarFrames.length?t('frameAt',{time:time(state.radarFrames[state.radarIndex].time)}):t('radarOff');
+  }
+  function showRadarFrame(index) {
+    if(!state.map||!state.radarEnabled||!state.radarFrames.length)return;
+    state.radarIndex=Math.max(0,Math.min(state.radarFrames.length-1,index));
+    const frame=state.radarFrames[state.radarIndex];
+    // RainViewer 2026: Universal Blue, past frames only, native zoom <= 7.
+    const url=`${state.radarHost}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+    if(state.radarLayer)state.radarLayer.setUrl(url);
+    else {
+      state.radarLayer=L.tileLayer(url,{opacity:.65,maxNativeZoom:7,maxZoom:12,attribution:'Radar: <a href="https://www.rainviewer.com/">RainViewer</a>'}).addTo(state.map);
+      state.radarLayer.on('tileerror',()=>{$('radarNote').textContent=t('radarTilesError');stopRadar();});
+    }
+    $('radarSlider').value=state.radarIndex;updateRadarTime();
+  }
+  async function toggleRadar() {
+    initMap();if(!state.map)return;
+    if(state.radarEnabled){
+      state.radarEnabled=false;stopRadar();if(state.radarLayer){state.map.removeLayer(state.radarLayer);state.radarLayer=null;}
+      $('radarSlider').disabled=true;$('radarPlay').disabled=true;$('radarToggle').classList.remove('radar-on');$('radarToggle').setAttribute('aria-pressed','false');updateRadarTime();return;
+    }
+    $('radarToggle').disabled=true;
+    try {
+      if(Date.now()-state.radarLoaded>5*60*1000){
+        const data=await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
+        if(!data.radar?.past?.length || !/^https:\/\/[^/]+$/.test(data.host) || new URL(data.host).hostname!=='tilecache.rainviewer.com')throw new Error('No valid radar frames');
+        state.radarFrames=data.radar.past.filter(f=>D.finite(f.time)&&/^\/v2\/radar\/[\w/.-]+$/.test(f.path));state.radarHost=data.host;state.radarLoaded=Date.now();
+      }
+      if(!state.radarFrames.length)throw new Error('No radar frames');
+      state.radarEnabled=true;$('radarSlider').max=state.radarFrames.length-1;$('radarSlider').disabled=false;$('radarPlay').disabled=false;
+      $('radarToggle').classList.add('radar-on');$('radarToggle').setAttribute('aria-pressed','true');$('radarNote').textContent=t('radarNote');
+      showRadarFrame(state.radarFrames.length-1);
+    } catch(error){console.warn('Radar request failed:',error.message);toast(t('radarError'));}
+    finally{$('radarToggle').disabled=false;}
+  }
+  function renderSources() {
+    const items=[
+      ['Open-Meteo · Weather','sourceWeather','https://open-meteo.com/en/docs'],
+      ['CAMS · Air quality','sourceAir','https://open-meteo.com/en/docs/air-quality-api'],
+      ['Open-Meteo · Archive','sourceHistory','https://open-meteo.com/en/docs/historical-weather-api'],
+      ['RainViewer · OpenStreetMap','sourceRadar','https://www.rainviewer.com/api/weather-maps-api.html'],
+      ['Astronomy Engine · Astronomy','sourceAstronomy','https://github.com/cosinekitty/astronomy']
+    ];
+    const w=state.weather;
+    $('sourceContent').innerHTML=`<p class="source-summary">${t('sourceIntro')}</p>${items.map(([title,key,url])=>`<div class="source-item"><h3><a href="${url}" target="_blank" rel="noopener">${title} ↗</a></h3><p>${t(key)}</p></div>`).join('')}<div class="source-item"><h3>${t('privacy')}</h3><p>${t('sourcePrivacy')}</p></div>${w?`<div class="source-meta">${t('forecastModel')}: ${modelName()}<br>${t('coordinates')}: <bdi>${state.place.lat.toFixed(4)}, ${state.place.lon.toFixed(4)}</bdi><br>${t('modelGrid')}: <bdi>${w.latitude}, ${w.longitude}</bdi><br>${t('elevation')}: <bdi>${num(w.elevation)} m</bdi><br>${t('dataAt',{time:date(w.current.time)+' '+time(w.current.time)})}<br>${t('retrievedAt',{time:time(state.retrieved/1000),zone:zone()})}</div>`:''}`;
+  }
+  function exportCSV() {
+    if(!state.weather)return;
+    const h=state.weather.hourly,fields=Object.keys(h).filter(k=>k!=='time');
+    const rows=[['utc_timestamp','location_latitude','location_longitude',...fields.map(k=>`${k} [${state.weather.hourly_units?.[k] || ''}]`)],...h.time.map((epoch,i)=>[new Date(epoch*1000).toISOString(),state.place.lat,state.place.lon,...fields.map(k=>D.finite(h[k]?.[i])?h[k][i]:'')])];
+    const content='\uFEFF'+rows.map(row=>row.map(value=>`"${String(value).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+    const blob=new Blob([content],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download=`pimx-weather-${state.place.lat.toFixed(2)}-${state.place.lon.toFixed(2)}-${D.dateKey(state.weather.current.time,zone())}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(t('exportReady'));
+  }
+  $('quickCities').addEventListener('click',event=>{const e=event.target.closest('[data-quick]');if(e)loadPlace(defaults[Number(e.dataset.quick)]);});
+  $('refreshButton').addEventListener('click',()=>loadPlace(state.place,true));
+  $('locationButton').addEventListener('click',()=>{
+    if(!navigator.geolocation){toast(t('locationUnsupported'));return;}
+    $('locationButton').disabled=true;
+    navigator.geolocation.getCurrentPosition(position=>{
+      $('locationButton').disabled=false;loadPlace({name:t('yourLocation'),lat:position.coords.latitude,lon:position.coords.longitude,kind:'gps'});
+    },()=>{$('locationButton').disabled=false;toast(t('locationError'));},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+  });
+  ['saveCityButton','addCityButton'].forEach(id=>$(id).addEventListener('click',saveCity));
+  ['C','F'].forEach(unit=>$(`unit${unit}`).addEventListener('click',()=>{state.unit=unit;write('pimx.weather.unit',unit);renderAll();renderSaved();renderHistory();updateMap();}));
+  $('languageButton').addEventListener('click',()=>{state.lang=state.lang==='fa'?'en':'fa';write('pimx.weather.lang',state.lang);closeSearch();++searchRevision;clearTimeout(searchTimer);searchController?.abort();applyLanguage();});
+  $('themeButton').addEventListener('click',()=>{state.light=!state.light;write('pimx.weather.light',state.light);document.body.classList.toggle('light',state.light);$('themeButton').innerHTML=icon(state.light?'moon':'sun');});
+  $('chartModes').addEventListener('click',event=>{const e=event.target.closest('[data-mode]');if(e){state.chartMode=e.dataset.mode;renderHourly();}});
+  $('forecastDays').addEventListener('click',event=>{const e=event.target.closest('[data-days]');if(e){state.days=Number(e.dataset.days);renderForecast();}});
+  $('forecastGrid').addEventListener('click',event=>{const e=event.target.closest('[data-day]');if(e)changeDay(Number(e.dataset.day));});
+  $('prevDay').addEventListener('click',()=>changeDay(state.day-1));$('nextDay').addEventListener('click',()=>changeDay(state.day+1));
+  $('datePicker').addEventListener('change',()=>{const index=state.weather?.daily.time.findIndex(epoch=>D.dateKey(epoch,zone())===$('datePicker').value);if(index>=0)changeDay(index);});
+  $('solarSystemHour').addEventListener('input',()=>{stopTime();state.minutes=Number($('solarSystemHour').value);renderAll();});
+  $('timePlay').addEventListener('click',playTime);
+  $('resetToNow').addEventListener('click',()=>changeDay(0));
+  $('modelSelect').addEventListener('change',()=>{state.model=$('modelSelect').value;write('pimx.weather.model',state.model);loadPlace(state.place,true);});
+  $('solarSystemSection').addEventListener('click',event=>{const element=event.target.closest('[data-planet]');if(element){state.selectedPlanet=element.dataset.planet;renderSolar();}});
+  $('zoomIn').addEventListener('click',()=>state.solarRenderer?.zoom(1.2));$('zoomOut').addEventListener('click',()=>state.solarRenderer?.zoom(1/1.2));$('zoomReset').addEventListener('click',()=>state.solarRenderer?.reset());
+  $('solarMotion').addEventListener('click',()=>{state.cameraMotion=!state.cameraMotion;state.solarRenderer?.setMotion(state.cameraMotion);renderSolar();});
+  $('historyContent').addEventListener('click',event=>{if(event.target.closest('#loadHistory,[data-action=history]'))loadHistory();});
+  $('historyPeriod').addEventListener('change',loadHistory);
+  $('radarToggle').addEventListener('click',toggleRadar);
+  $('radarSlider').addEventListener('input',()=>{stopRadar();showRadarFrame(Number($('radarSlider').value));});
+  $('radarPlay').addEventListener('click',()=>{
+    if(state.radarTimer){stopRadar();return;}
+    if(!state.radarEnabled)return;$('radarPlay').innerHTML=icon('pause');
+    // Slow playback and browser tile caching keep requests below provider limits.
+    state.radarTimer=setInterval(()=>showRadarFrame((state.radarIndex+1)%state.radarFrames.length),5000);
+  });
+  $('exportButton').addEventListener('click',exportCSV);
+  ['sourceButton','dataInfoButton'].forEach(id=>$(id).addEventListener('click',()=>{renderSources();$('sourceDialog').showModal();}));
+  $('closeDialog').addEventListener('click',()=>$('sourceDialog').close());
+  $('sourceDialog').addEventListener('click',event=>{if(event.target===$('sourceDialog')){const rect=event.target.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)event.target.close();}});
+  const links=[...document.querySelectorAll('.nav-link')];
+  links.forEach(link=>{link.setAttribute('aria-label',t(link.querySelector('[data-t]').dataset.t));link.addEventListener('click',()=>links.forEach(e=>e.classList.toggle('active',e===link)));});
+  const navObserver=new IntersectionObserver(entries=>{
+    const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];
+    if(visible)links.forEach(link=>{const active=link.getAttribute('href')===`#${visible.target.id}`;link.classList.toggle('active',active);if(active)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current');});
+  },{rootMargin:'-85px 0px -50% 0px',threshold:[0,.2,.5]});
+  links.forEach(link=>{const section=document.querySelector(link.getAttribute('href'));if(section)navObserver.observe(section);});
+  const mapObserver=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){initMap();mapObserver.disconnect();}},{rootMargin:'200px'});mapObserver.observe($('weatherMap'));
+  const solarObserver=new IntersectionObserver(entries=>{state.solarVisible=entries[0].isIntersecting;if(state.solarVisible)initSolarRenderer();state.solarRenderer?.setVisible(state.solarVisible);},{rootMargin:'150px'});solarObserver.observe($('solarSystem'));
+  if(!matchMedia('(prefers-reduced-motion: reduce)').matches){
+    const reveal=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.animate([{opacity:0,transform:'perspective(900px) translateY(22px) rotateX(3deg)'},{opacity:1,transform:'perspective(900px) translateY(0) rotateX(0)'}],{duration:700,easing:'cubic-bezier(.2,.75,.25,1)'});reveal.unobserve(entry.target);}});},{threshold:.08});
+    document.querySelectorAll('.panel').forEach(panel=>reveal.observe(panel));
+    if(matchMedia('(pointer: fine)').matches){$('overview').addEventListener('pointermove',event=>{const box=$('overview').getBoundingClientRect();$('overview').style.setProperty('--tiltX',`${(event.clientY-box.top-box.height/2)/box.height*-4}deg`);$('overview').style.setProperty('--tiltY',`${(event.clientX-box.left-box.width/2)/box.width*4}deg`);});$('overview').addEventListener('pointerleave',()=>{$('overview').style.setProperty('--tiltX','0deg');$('overview').style.setProperty('--tiltY','0deg');});}
+  }
+  let lastRefreshCheck=Date.now();
+  setInterval(()=>{
+    updateClock();renderStatus();
+    if(state.weather){renderDateControls();renderSun();renderAstronomy();renderSolar();if(view()?.live){renderHero();renderHourly();renderMetrics();renderAir();}}
+    if(!document.hidden&&$('autoRefresh').checked&&!state.loading&&Date.now()-lastRefreshCheck>=15*60*1000){lastRefreshCheck=Date.now();loadPlace(state.place,true);}
+  },60000);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){stopRadar();stopTime();}else if($('autoRefresh').checked&&!state.loading&&state.retrieved&&Date.now()-state.retrieved>=15*60*1000){lastRefreshCheck=Date.now();loadPlace(state.place,true);}});
+  document.querySelectorAll('[data-icon]').forEach(e=>e.innerHTML=icon(e.dataset.icon));
+  document.body.classList.toggle('light',state.light);$('themeButton').innerHTML=icon(state.light?'moon':'sun');
+  dateModelControls=WeatherControls.create({t,icon});
+  applyLanguage();loadPlace(state.place);loadSavedWeather();
 })();

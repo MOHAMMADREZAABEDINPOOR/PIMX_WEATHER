@@ -10,12 +10,6 @@
 
 # 🌤️ PIMX WEATHER
 
-<!-- pimx-live-site:start -->
-## وب‌سایت آنلاین
-
-**[مشاهدهٔ PIMX_WEATHER ↗](https://pimx-weather.pages.dev/)**
-<!-- pimx-live-site:end -->
-
 داشبورد آب‌وهوا با JavaScript ساده، پیش‌بینی، چندزبانه‌بودن، استایل متحرک و نمایش‌های نجومی و خورشیدی.
 
 [GitHub](https://github.com/MOHAMMADREZAABEDINPOOR/PIMX_WEATHER) · [PIMX / Profile](https://github.com/MOHAMMADREZAABEDINPOOR) · [بنر ثابت](assets/readme/hero.png)
